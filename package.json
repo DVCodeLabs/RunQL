@@ -2,15 +2,15 @@
   "name": "runql",
   "displayName": "RunQL",
   "description": "SQL workflows, connections, and ERD tooling in VS Code.",
-  "publisher": "runql",
+  "publisher": "RunQL-VSCode-Extension",
   "icon": "media/icon.png",
   "author": "Rob Darling",
   "repository": {
     "type": "git",
-    "url": "https://github.com/RunQL-Org/RunQL-Client.git"
+    "url": "https://github.com/DarlingNorthAdventures/RunQL.git"
   },
   "bugs": {
-    "url": "https://github.com/runql/runql/issues"
+    "url": "https://github.com/DarlingNorthAdventures/RunQL/issues"
   },
   "homepage": "https://runql.com",
   "keywords": [
