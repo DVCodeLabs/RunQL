@@ -1,0 +1,314 @@
+import * as vscode from 'vscode';
+import * as path from 'path';
+import { canonicalizeSql } from '../core/hashing';
+import { fileExists } from '../core/fsWorkspace';
+import { loadConnectionProfiles } from '../connections/connectionStore';
+import { getConfiguredAIProvider, openAiProviderSettings } from './aiService';
+import { buildSchemaContext } from './schemaContext';
+import { loadPromptTemplate, renderPrompt } from './prompts';
+import { ErrorHandler, ErrorSeverity, formatAIError } from '../core/errorHandler';
+
+const CONTENT_START = "<!-- RunQL:content:start -->";
+const CONTENT_END = "<!-- RunQL:content:end -->";
+
+export async function generateMarkdownDoc(context: vscode.ExtensionContext) {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showWarningMessage("No active editor.");
+        return;
+    }
+
+    const sqlDoc = editor.document;
+    if (!isSqlDoc(sqlDoc)) {
+        vscode.window.showWarningMessage("Open a SQL file to generate docs.");
+        return;
+    }
+
+    const sqlText = sqlDoc.getText();
+    if (!sqlText.trim()) {
+        vscode.window.showWarningMessage("File is empty.");
+        return;
+    }
+
+    const { sqlHash } = canonicalizeSql(sqlText);
+    const sqlUri = sqlDoc.uri;
+    const mdUri = sqlUri.with({ path: sqlUri.path.replace(/\.sql$/i, '.md') });
+
+    const { connectionName, dialect, connectionId } = await resolveConnectionInfo(context, sqlDoc);
+
+    await ensureMarkdownFile(mdUri, sqlUri, connectionName, dialect, sqlHash);
+
+    const mdDoc = await vscode.workspace.openTextDocument(mdUri);
+    await vscode.window.showTextDocument(mdDoc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+
+    const existingHash = readFrontmatterValue(mdDoc.getText(), "source_hash");
+    if (existingHash && existingHash !== sqlHash) {
+        const choice = await vscode.window.showWarningMessage(
+            "Doc was created for an older SQL version.",
+            "Regenerate",
+            "Cancel"
+        );
+        if (choice !== "Regenerate") return;
+    }
+
+    const provider = await getConfiguredAIProvider(context, { requireConfigured: true });
+    if (!provider) {
+        const picked = await vscode.window.showWarningMessage(
+            "No AI provider configured.",
+            "Configure AI provider"
+        );
+        if (picked) await openAiProviderSettings();
+        return;
+    }
+
+    const schemaContext = await buildSchemaContext(sqlText, connectionId);
+    const promptTemplate = await loadPromptTemplate("markdownDoc");
+    const prompt = renderPrompt(promptTemplate, {
+        sql: sqlText,
+        dialect,
+        connection: connectionName,
+        schemaContext: schemaContext ? `Schema context:\n${schemaContext}` : ""
+    });
+
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: "Generating documentation...",
+        cancellable: true
+    }, async (_progress, token) => {
+        if (token.isCancellationRequested) return;
+        try {
+            const output = await provider.generateCompletion(prompt);
+            if (token.isCancellationRequested) return;
+
+            const sanitized = stripWrappingCodeFence(output.trim());
+            const normalized = ensureMarkdownSections(sanitized);
+            await streamInsert(mdUri, mdDoc, normalized);
+        } catch (e: unknown) {
+            await ErrorHandler.handle(e, {
+                severity: ErrorSeverity.Error,
+                userMessage: formatAIError(
+                    'Documentation generation',
+                    'AI',
+                    ErrorHandler.extractErrorMessage(e),
+                    'Check AI provider settings and try again'
+                ),
+                context: 'Generate Markdown Doc'
+            });
+        }
+    });
+}
+
+export async function openMarkdownDoc(_context: vscode.ExtensionContext) {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showWarningMessage("No active editor.");
+        return;
+    }
+
+    const sqlDoc = editor.document;
+    if (!isSqlDoc(sqlDoc)) {
+        vscode.window.showWarningMessage("Open a SQL file to view docs.");
+        return;
+    }
+
+    const sqlUri = sqlDoc.uri;
+    const mdUri = sqlUri.with({ path: sqlUri.path.replace(/\.sql$/i, '.md') });
+
+    if (!(await fileExists(mdUri))) {
+        vscode.window.showInformationMessage("Documentation not generated yet. Click 'Create Markdown Description' first.");
+        return;
+    }
+
+    const mdDoc = await vscode.workspace.openTextDocument(mdUri);
+    await vscode.window.showTextDocument(mdDoc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+}
+
+function isSqlDoc(doc: vscode.TextDocument): boolean {
+    const id = doc.languageId.toLowerCase();
+    return id.includes("sql") || id.includes("pgsql") || id.includes("mysql");
+}
+
+
+async function resolveConnectionInfo(
+    context: vscode.ExtensionContext,
+    doc: vscode.TextDocument
+): Promise<{ connectionId?: string; connectionName: string; dialect: string }> {
+    const docKey = doc.uri.toString();
+    const docConnections = context.workspaceState.get<Record<string, string>>("runql.docConnections.v1", {});
+    const docConnId = docConnections[docKey];
+    const activeId = context.workspaceState.get<string>("runql.activeConnectionId");
+    const connectionId = docConnId || activeId;
+
+    let connectionName = "none";
+    let dialect = "unknown";
+
+    if (connectionId) {
+        const profiles = await loadConnectionProfiles();
+        const profile = profiles.find(p => p.id === connectionId);
+        if (profile) {
+            connectionName = profile.name;
+            dialect = profile.dialect;
+        }
+    }
+
+    return { connectionId, connectionName, dialect };
+}
+
+async function ensureMarkdownFile(
+    mdUri: vscode.Uri,
+    sqlUri: vscode.Uri,
+    connectionName: string,
+    dialect: string,
+    sqlHash: string
+): Promise<void> {
+    const title = path.basename(sqlUri.fsPath).replace(/\.sql$/i, '');
+    const prettyTitle = title.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    const today = new Date().toISOString().split('T')[0];
+    const sourcePath = vscode.workspace.asRelativePath(sqlUri, false);
+
+    const header = [
+        "---",
+        `title: "${prettyTitle}"`,
+        `created_at: "${today}"`,
+        `connection: "${connectionName}"`,
+        `dialect: "${dialect}"`,
+        "tags: []",
+        `source_path: "${sourcePath}"`,
+        `source_hash: "${sqlHash}"`,
+        "---",
+        "",
+        "<!-- DO NOT EDIT ABOVE THIS LINE - SYSTEM MANAGED -->"
+    ].join("\n");
+
+    if (!(await fileExists(mdUri))) {
+        const content = [
+            header,
+            "",
+            CONTENT_START,
+            "",
+            CONTENT_END,
+            ""
+        ].join("\n");
+        await vscode.workspace.fs.writeFile(mdUri, Buffer.from(content, "utf8"));
+        return;
+    }
+
+    const existing = new TextDecoder().decode(await vscode.workspace.fs.readFile(mdUri));
+    if (existing.startsWith("---")) return;
+
+    const content = [
+        header,
+        "",
+        existing.trim(),
+        "",
+        CONTENT_START,
+        "",
+        CONTENT_END,
+        ""
+    ].join("\n");
+    await vscode.workspace.fs.writeFile(mdUri, Buffer.from(content, "utf8"));
+}
+
+function readFrontmatterValue(text: string, key: string): string | null {
+    const lines = text.split(/\r?\n/);
+    if (lines[0] !== "---") return null;
+    const endIndex = lines.findIndex((line, idx) => idx > 0 && line.trim() === "---");
+    if (endIndex === -1) return null;
+    for (let i = 1; i < endIndex; i += 1) {
+        const match = lines[i].match(new RegExp(`^${key}:\\s*\"?(.*?)\"?$`));
+        if (match) return match[1];
+    }
+    return null;
+}
+
+function replaceContentRegion(text: string, content: string): string {
+    const start = text.indexOf(CONTENT_START);
+    const end = text.indexOf(CONTENT_END);
+    if (start !== -1 && end !== -1 && end > start) {
+        const before = text.slice(0, start + CONTENT_START.length);
+        const after = text.slice(end);
+        return `${before}\n${content}\n${after}`;
+    }
+
+    const lines = text.split(/\r?\n/);
+    let headerEnd = -1;
+    if (lines[0] === "---") {
+        headerEnd = lines.findIndex((line, idx) => idx > 0 && line.trim() === "---");
+    }
+    if (headerEnd !== -1) {
+        const header = lines.slice(0, headerEnd + 1).join("\n");
+        return [
+            header,
+            "",
+            CONTENT_START,
+            content,
+            CONTENT_END,
+            ""
+        ].join("\n");
+    }
+
+    return [
+        CONTENT_START,
+        content,
+        CONTENT_END,
+        ""
+    ].join("\n");
+}
+
+async function writeDocument(uri: vscode.Uri, doc: vscode.TextDocument, newText: string): Promise<void> {
+    const lastLine = doc.lineCount > 0 ? doc.lineAt(doc.lineCount - 1).range.end : new vscode.Position(0, 0);
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(uri, new vscode.Range(new vscode.Position(0, 0), lastLine), newText);
+    await vscode.workspace.applyEdit(edit);
+    await doc.save();
+}
+
+async function streamInsert(uri: vscode.Uri, doc: vscode.TextDocument, content: string): Promise<void> {
+    const baseText = doc.getText();
+    const chunks = chunkText(content, 6);
+    let acc = "";
+    for (const chunk of chunks) {
+        acc += chunk;
+        const updated = replaceContentRegion(baseText, acc);
+        await writeDocument(uri, doc, updated);
+        await new Promise(resolve => setTimeout(resolve, 40));
+    }
+}
+
+function chunkText(text: string, parts: number): string[] {
+    if (parts <= 1 || text.length === 0) return [text];
+    const size = Math.ceil(text.length / parts);
+    const chunks: string[] = [];
+    for (let i = 0; i < text.length; i += size) {
+        chunks.push(text.slice(i, i + size));
+    }
+    return chunks;
+}
+
+function stripWrappingCodeFence(text: string): string {
+    if (text.startsWith("```") && text.endsWith("```")) {
+        const lines = text.split(/\r?\n/);
+        if (lines.length >= 3) {
+            return lines.slice(1, -1).join("\n").trim();
+        }
+    }
+    return text;
+}
+
+function ensureMarkdownSections(text: string): string {
+    const required = [
+        "# What this query answers",
+        "# Inputs",
+        "# Business logic",
+        "# Output",
+        "# Caveats",
+        "# Performance notes"
+    ];
+    const hasAll = required.every(h => text.includes(h));
+    if (hasAll) return text;
+    return [
+        ...required,
+        "",
+        text
+    ].join("\n");
+}
