@@ -66,19 +66,33 @@ export async function listFiles(dir: vscode.Uri): Promise<string[]> {
 }
 
 /**
- * Ensure RunQL AGENTS.md exists.
- * Always place it in RunQL/AGENTS.md.
+ * Ensure AGENTS.md exists in the project root.
+ * If AGENTS.md already exists, create AGENTS_RUNQL.md instead.
  */
 export async function ensureAgentsMd(): Promise<void> {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders) return;
 
-  const dpDir = await ensureDPDirs();
-  const agentsUri = vscode.Uri.joinPath(dpDir, 'AGENTS.md');
+  const root = folders[0].uri;
+  const agentsUri = vscode.Uri.joinPath(root, 'AGENTS.md');
+  const fallbackUri = vscode.Uri.joinPath(root, 'AGENTS_RUNQL.md');
 
-  if (await fileExists(agentsUri)) return;
+  // If both files exist, nothing to do
+  if (await fileExists(agentsUri)) {
+    if (await fileExists(fallbackUri)) return;
+    // AGENTS.md exists but not ours — use fallback name
+    const targetUri = fallbackUri;
+    const bytes = new TextEncoder().encode(agentsContent());
+    await vscode.workspace.fs.writeFile(targetUri, bytes);
+    return;
+  }
 
-  const content = `# Agent Guidance
+  const bytes = new TextEncoder().encode(agentsContent());
+  await vscode.workspace.fs.writeFile(agentsUri, bytes);
+}
+
+function agentsContent(): string {
+  return `# Agent Guidance
 
 This repo stores SQL, schemas, and ERD metadata in known locations. When a user asks for SQL, look for existing artifacts first, then use schema and documentation to build something new only if needed.
 
@@ -118,25 +132,19 @@ This repo stores SQL, schemas, and ERD metadata in known locations. When a user 
 - If an existing query partially answers the request, adapt it rather than starting from scratch.
 - Keep outputs consistent with the repository's established conventions and naming.
 `;
-
-  const bytes = new TextEncoder().encode(content);
-  await vscode.workspace.fs.writeFile(agentsUri, bytes);
 }
 
 /**
- * Ensure README.md exists in RunQL/ with project setup instructions.
+ * Ensure README_RUNQL.md exists in the project root with project setup instructions.
  */
 export async function ensureReadmeMd(): Promise<void> {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders) return;
 
-  const dpDir = await ensureDPDirs();
-  const readmeUri = vscode.Uri.joinPath(dpDir, 'README.md');
+  const root = folders[0].uri;
+  const readmeUri = vscode.Uri.joinPath(root, 'README_RUNQL.md');
 
-  // If README.md exists, do nothing.
-  if (await fileExists(readmeUri)) {
-    return;
-  }
+  if (await fileExists(readmeUri)) return;
 
   const content = `# RunQL Project
 
@@ -146,12 +154,12 @@ This project uses RunQL for SQL workflows and schema exploration.
 
 1. **Git Configuration**:
    The \`RunQL/system/\` directory contains generated system files and indices that usually do not need to be committed to version control.
-   
+
    Recommended \`.gitignore\` entry:
    \`\`\`gitignore
    RunQL/system/
    \`\`\`
-   
+
    *Note: \`RunQL/queries/\` and \`RunQL/schemas/\` SHOULD be committed as they contain your source artifacts.*
 
 ## Folder Structure

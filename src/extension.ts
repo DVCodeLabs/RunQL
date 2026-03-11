@@ -565,13 +565,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
   );
 
   const maybeAutoOpenWelcome = async () => {
-    if (autoWelcomeShownThisSession) return;
-    if ((vscode.workspace.workspaceFolders?.length ?? 0) === 0) return;
-    if (await isProjectInitialized()) return;
+    try {
+      if (autoWelcomeShownThisSession) return;
+      if ((vscode.workspace.workspaceFolders?.length ?? 0) === 0) return;
+      if (await isProjectInitialized()) return;
 
-    autoWelcomeShownThisSession = true;
-    await vscode.commands.executeCommand("workbench.view.extension.runql");
-    await vscode.commands.executeCommand("runql.welcome.open");
+      autoWelcomeShownThisSession = true;
+      await vscode.commands.executeCommand("workbench.view.extension.runql");
+      await vscode.commands.executeCommand("runql.welcome.open");
+    } catch (err) {
+      Logger.error("Failed to auto-open welcome page", err);
+    }
   };
 
   // Auto-open sidebar + Welcome when project is not initialized.

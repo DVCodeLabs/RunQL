@@ -17,7 +17,8 @@ type InitStructureEntry = {
 
 // Folder + default file structure that Initialize creates
 const INIT_STRUCTURE: InitStructureEntry[] = [
-    { folder: 'RunQL', files: ['README.md', 'AGENTS.md'] },
+    { folder: '(project root)', files: ['AGENTS.md (or AGENTS_RUNQL.md)', 'README_RUNQL.md'] },
+    { folder: 'RunQL', files: [] },
     { folder: 'RunQL/queries', files: [] },
     { folder: 'RunQL/schemas', files: [] },
     { folder: 'RunQL/system', files: [] },
@@ -265,8 +266,8 @@ function App() {
                 </ul>
                 <div style={{ marginTop: '10px', marginBottom: '10px' }}>
                     <div style={styles.folderName}>📄Initialization files:</div>
-                    RunQL creates <code>RunQL/README.md</code> and <code>RunQL/AGENTS.md</code>.<br />
-                    For best results, copy <code>RunQL/AGENTS.md</code> to your project root, or copy its contents into your existing root <code>AGENTS.md</code>.
+                    RunQL creates <code>AGENTS.md</code> and <code>README_RUNQL.md</code> in your project root.<br />
+                    If <code>AGENTS.md</code> already exists, it creates <code>AGENTS_RUNQL.md</code> instead.
                 </div>
             </div>
 
@@ -325,7 +326,7 @@ function App() {
                             style={{ ...styles.button, ...styles.secondaryButton }}
                             onClick={handleOpenReadme}
                         >
-                            📘 Open RunQL/README.md
+                            📘 Open README_RUNQL.md
                         </button>
                     </div>
                 </div>

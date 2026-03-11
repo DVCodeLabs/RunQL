@@ -101,18 +101,16 @@ export class WelcomeView {
                                 return;
                             }
 
-                            const runqlReadmePath = vscode.Uri.joinPath(folders[0].uri, 'RunQL', 'README.md');
-                            const rootReadmePath = vscode.Uri.joinPath(folders[0].uri, 'README.md');
-                            const readmePath = (await fileExists(runqlReadmePath)) ? runqlReadmePath : rootReadmePath;
-                            if (!(await fileExists(readmePath))) {
-                                vscode.window.showWarningMessage('RunQL/README.md not found. Initialize RunQL to create it.');
+                            const readmeRunqlPath = vscode.Uri.joinPath(folders[0].uri, 'README_RUNQL.md');
+                            if (!(await fileExists(readmeRunqlPath))) {
+                                vscode.window.showWarningMessage('README_RUNQL.md not found. Initialize RunQL to create it.');
                                 return;
                             }
 
-                            const doc = await vscode.workspace.openTextDocument(readmePath);
+                            const doc = await vscode.workspace.openTextDocument(readmeRunqlPath);
                             await vscode.window.showTextDocument(doc, { preview: true, viewColumn: vscode.ViewColumn.Beside });
                         } catch (_e: unknown) {
-                            vscode.window.showWarningMessage('Could not open RunQL/README.md.');
+                            vscode.window.showWarningMessage('Could not open README_RUNQL.md.');
                         }
                         break;
                 }
@@ -129,7 +127,7 @@ export class WelcomeView {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'unsafe-inline';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; font-src ${webview.cspSource}; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'unsafe-inline';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Welcome to RunQL</title>
 </head>
