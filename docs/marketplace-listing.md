@@ -89,3 +89,14 @@ Use this for each release entry.
 ## Screenshot Captions (Marketplace)
 
 - `quickstart-run-sql.png`: Run SQL and inspect results in VS Code
+
+## [1.2] - 2026-03-10
+
+### Added
+- Fix for a bug that caused the initialization screen to not show up.
+- Update to add AGENTS.md to the project root.
+
+## [1.2.1] - 2026-03-11
+
+### Added
+- Fix for links on welcome page.

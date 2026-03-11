@@ -1,7 +1,7 @@
 # RunQL
 
 [![Tests](https://github.com/runql/runql/actions/workflows/test.yml/badge.svg)](https://github.com/runql/runql/actions/workflows/test.yml)
-![Version](https://img.shields.io/badge/version-0.0.1-blue)
+[![Version](https://img.shields.io/visual-studio-marketplace/v/RunQL-VSCode-Extension.runql?label=version)](https://marketplace.visualstudio.com/items?itemName=RunQL-VSCode-Extension.runql)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 [![VS Code](https://img.shields.io/badge/vscode-%5E1.96.0-007ACC)](https://code.visualstudio.com/)
 
@@ -55,7 +55,7 @@ code --install-extension runql.runql
 ```bash
 npm ci
 npx vsce package --target darwin-arm64  # use your platform
-code --install-extension runql-darwin-arm64-0.0.1.vsix
+code --install-extension runql-darwin-arm64-1.2.1.vsix
 ```
 
 ## Quick Start
