@@ -69,6 +69,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
   Logger.info("RunQL extension activating...");
 
   let projectInitializedAtStartup = false;
+  let autoWelcomeShownThisSession = false;
   const tablePreviewContextByDocUri = new Map<string, {
     sql: string;
     source: QueryResultSource;
@@ -563,11 +564,27 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     })
   );
 
-  // Auto-open sidebar + Welcome on activation when project is not initialized.
-  if (!projectInitializedAtStartup && (vscode.workspace.workspaceFolders?.length ?? 0) > 0) {
+  const maybeAutoOpenWelcome = async () => {
+    if (autoWelcomeShownThisSession) return;
+    if ((vscode.workspace.workspaceFolders?.length ?? 0) === 0) return;
+    if (await isProjectInitialized()) return;
+
+    autoWelcomeShownThisSession = true;
     await vscode.commands.executeCommand("workbench.view.extension.runql");
     await vscode.commands.executeCommand("runql.welcome.open");
+  };
+
+  // Auto-open sidebar + Welcome when project is not initialized.
+  // Covers both activation-time workspaces and folders added after activation.
+  if (!projectInitializedAtStartup) {
+    await maybeAutoOpenWelcome();
   }
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void maybeAutoOpenWelcome();
+    })
+  );
 
   // Insert text helper used by schema tree clicks
   context.subscriptions.push(
