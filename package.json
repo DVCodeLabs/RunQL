@@ -804,7 +804,6 @@
   "overrides": {
     "node-gyp": "^12.0.0",
     "fast-xml-parser": "^5.3.4",
-    "glob": "^11.1.0",
     "rimraf": "^6.0.0"
   }
 }
