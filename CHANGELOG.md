@@ -38,3 +38,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 - Fix for test links
+
+## [1.3.0] - 2026-03-26
+
+### Added
+- Added the ability to reuse existing connection details when adding a new connection.
