@@ -33,7 +33,7 @@ RunQL supports multiple database dialects via adapters.
 
 ## Typical Workflow
 
-1. Add connection
+1. Add DB connection
 2. Test connection
 3. Introspect schema
 4. Run SQL and inspect results

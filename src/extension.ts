@@ -907,8 +907,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     const activeConnId = getEffectiveConnectionId(docConnectionId);
 
     if (!activeConnId) {
-      const choice = await vscode.window.showErrorMessage("No connections available. Add one first.", "Add Connection");
-      if (choice === "Add Connection") {
+      const choice = await vscode.window.showErrorMessage("No connections available. Add one first.", "Add DB Connection");
+      if (choice === "Add DB Connection") {
         vscode.commands.executeCommand("runql.connection.add");
       }
       return;
