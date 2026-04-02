@@ -251,10 +251,6 @@
         "icon": "$(type-hierarchy)"
       },
       {
-        "command": "runql.chart.createFromResults",
-        "title": "RunQL: Create Chart from Results (AI)"
-      },
-      {
         "command": "runql.query.renameBundle",
         "title": "RunQL: Rename Query Bundle",
         "icon": {

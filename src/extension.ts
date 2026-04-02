@@ -1625,10 +1625,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       const { openMarkdownDoc } = require('./ai/docGenerator');
       await openMarkdownDoc(context);
     }),
-    vscode.commands.registerCommand("runql.chart.createFromResults", async (uri?: string | vscode.Uri) => {
-      const { generateChart } = require('./ai/chartgen');
-      await generateChart(context, uri);
-    }),
     vscode.commands.registerCommand("runql.ai.selectModel", async () => {
       const { selectAIModel } = require('./ai/aiService');
       await selectAIModel();
