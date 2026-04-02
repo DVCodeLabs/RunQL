@@ -525,6 +525,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     }),
     vscode.commands.registerCommand("runql.project.initialize", async () => {
       try {
+        if ((vscode.workspace.workspaceFolders?.length ?? 0) === 0) {
+          vscode.window.showWarningMessage('Open a folder before initializing RunQL.');
+          return;
+        }
+
         const { ensureDPDirs, ensureAgentsMd } = require('./core/fsWorkspace');
 
         // Create folder structure
@@ -567,12 +572,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
   const maybeAutoOpenWelcome = async () => {
     try {
       if (autoWelcomeShownThisSession) return;
-      if ((vscode.workspace.workspaceFolders?.length ?? 0) === 0) return;
       if (await isProjectInitialized()) return;
 
-      autoWelcomeShownThisSession = true;
       await vscode.commands.executeCommand("workbench.view.extension.runql");
       await vscode.commands.executeCommand("runql.welcome.open");
+      autoWelcomeShownThisSession = true;
     } catch (err) {
       Logger.error("Failed to auto-open welcome page", err);
     }
@@ -586,6 +590,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void updateProjectInitializedContext();
       void maybeAutoOpenWelcome();
     })
   );
