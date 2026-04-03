@@ -7,6 +7,7 @@ import { getConfiguredAIProvider, openAiProviderSettings } from './aiService';
 import { buildSchemaContext } from './schemaContext';
 import { loadPromptTemplate, renderPrompt } from './prompts';
 import { ErrorHandler, ErrorSeverity, formatAIError } from '../core/errorHandler';
+import { MarkdownViewProvider } from '../markdown/markdownView';
 
 const CONTENT_START = "<!-- RunQL:content:start -->";
 const CONTENT_END = "<!-- RunQL:content:end -->";
@@ -38,8 +39,9 @@ export async function generateMarkdownDoc(context: vscode.ExtensionContext) {
 
     await ensureMarkdownFile(mdUri, sqlUri, connectionName, dialect, sqlHash);
 
-    const mdDoc = await vscode.workspace.openTextDocument(mdUri);
-    await vscode.window.showTextDocument(mdDoc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+    if (MarkdownViewProvider.current) {
+        await MarkdownViewProvider.current.showAndFocus(sqlUri);
+    }
 
     const provider = await getConfiguredAIProvider(context, { requireConfigured: true });
     if (!provider) {
@@ -77,7 +79,7 @@ export async function generateMarkdownDoc(context: vscode.ExtensionContext) {
 
             const sanitized = stripWrappingCodeFence(output.trim());
             const normalized = ensureMarkdownSections(sanitized);
-            await streamInsert(mdUri, mdDoc, normalized);
+            await streamInsert(mdUri, sqlUri, normalized);
         } catch (e: unknown) {
             await ErrorHandler.handle(e, {
                 severity: ErrorSeverity.Error,
@@ -109,13 +111,9 @@ export async function openMarkdownDoc(_context: vscode.ExtensionContext) {
     const sqlUri = sqlDoc.uri;
     const mdUri = sqlUri.with({ path: sqlUri.path.replace(/\.sql$/i, '.md') });
 
-    if (!(await fileExists(mdUri))) {
-        vscode.window.showInformationMessage("Documentation not generated yet. Click 'Create Markdown Description' first.");
-        return;
+    if (MarkdownViewProvider.current) {
+        await MarkdownViewProvider.current.showAndFocus(sqlUri);
     }
-
-    const mdDoc = await vscode.workspace.openTextDocument(mdUri);
-    await vscode.window.showTextDocument(mdDoc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
 }
 
 function isSqlDoc(doc: vscode.TextDocument): boolean {
@@ -250,24 +248,20 @@ function replaceContentRegion(text: string, content: string): string {
     ].join("\n");
 }
 
-async function writeDocument(uri: vscode.Uri, doc: vscode.TextDocument, newText: string): Promise<void> {
-    const lastLine = doc.lineCount > 0 ? doc.lineAt(doc.lineCount - 1).range.end : new vscode.Position(0, 0);
-    const edit = new vscode.WorkspaceEdit();
-    edit.replace(uri, new vscode.Range(new vscode.Position(0, 0), lastLine), newText);
-    await vscode.workspace.applyEdit(edit);
-    await doc.save();
-}
-
-async function streamInsert(uri: vscode.Uri, doc: vscode.TextDocument, content: string): Promise<void> {
-    const baseText = doc.getText();
+async function streamInsert(mdUri: vscode.Uri, sqlUri: vscode.Uri, content: string): Promise<void> {
+    const fileBytes = await vscode.workspace.fs.readFile(mdUri);
+    const baseText = new TextDecoder().decode(fileBytes);
     const chunks = chunkText(content, 6);
     let acc = "";
+    MarkdownViewProvider.current?.setGenerating(sqlUri, true);
     for (const chunk of chunks) {
         acc += chunk;
         const updated = replaceContentRegion(baseText, acc);
-        await writeDocument(uri, doc, updated);
+        await vscode.workspace.fs.writeFile(mdUri, Buffer.from(updated, "utf8"));
+        MarkdownViewProvider.current?.updateContent(sqlUri, updated);
         await new Promise(resolve => setTimeout(resolve, 40));
     }
+    MarkdownViewProvider.current?.setGenerating(sqlUri, false);
 }
 
 function chunkText(text: string, parts: number): string[] {

@@ -301,6 +301,18 @@
         "icon": "$(markdown)"
       },
       {
+        "command": "runql.markdown.focus",
+        "title": "RunQL: Focus Markdown Panel"
+      },
+      {
+        "command": "runql.markdown.save",
+        "title": "RunQL: Save Markdown"
+      },
+      {
+        "command": "runql.markdown.reload",
+        "title": "RunQL: Reload Markdown from Disk"
+      },
+      {
         "command": "runql.query.deleteSaved",
         "title": "RunQL: Delete Saved Query",
         "icon": {
@@ -492,6 +504,11 @@
           "id": "runql-memory-recall",
           "title": "RunQL: Query History",
           "icon": "media/runql_logo2.svg"
+        },
+        {
+          "id": "runql-markdown",
+          "title": "RunQL: Markdown",
+          "icon": "media/runql_logo2.svg"
         }
       ]
     },
@@ -529,6 +546,14 @@
           "name": "RunQL: Results",
           "type": "webview",
           "icon": "$(table)"
+        }
+      ],
+      "runql-markdown": [
+        {
+          "id": "runql.markdownView",
+          "name": "RunQL: Markdown",
+          "type": "webview",
+          "icon": "$(markdown)"
         }
       ],
       "runql-erd": [

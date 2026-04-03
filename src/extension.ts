@@ -53,6 +53,7 @@ import { refreshAllSecureQLProfiles } from './connections/secureqlStartupRefresh
 import { queryIndex } from './queryLibrary/queryIndex';
 
 import { ResultsViewProvider } from './results/resultsView';
+import { MarkdownViewProvider } from './markdown/markdownView';
 import { ERDViewProvider } from './erd/erdViewProvider';
 import { updateProjectInitializedContext, isProjectInitialized } from './core/isProjectInitialized';
 import { WelcomeView } from './ui/welcomeView';
@@ -96,6 +97,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
   const erdViewProvider = new ERDViewProvider(context);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(ERDViewProvider.viewType, erdViewProvider, {
+      webviewOptions: { retainContextWhenHidden: true }
+    })
+  );
+
+  const markdownViewProvider = new MarkdownViewProvider(context);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(MarkdownViewProvider.viewType, markdownViewProvider, {
       webviewOptions: { retainContextWhenHidden: true }
     })
   );
@@ -1528,8 +1536,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       // Update similar queries context
       await updateSimilarQueriesContext(editor);
 
-      if (!editor) return;
-      if (!isSqlDoc(editor.document)) return;
+      if (!editor || !isSqlDoc(editor.document)) {
+        resultsViewProvider.showNoEditor();
+        markdownViewProvider.showNoEditor();
+        return;
+      }
 
       // Auto-restore connection for the document
       const entry = queryIndex.getEntry(editor.document.uri);
@@ -1559,6 +1570,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       // so we don't show stale results from potential previous run of another file.
       // (Assuming provider implementation of show(uri) handles updating existing view)
       resultsViewProvider.show(editor.document.uri);
+      markdownViewProvider.show(editor.document.uri);
     })
   );
 
@@ -1632,6 +1644,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     vscode.commands.registerCommand("runql.ai.selectModel", async () => {
       const { selectAIModel } = require('./ai/aiService');
       await selectAIModel();
+    })
+  );
+
+  // Markdown Panel Commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand("runql.markdown.focus", () => {
+      vscode.commands.executeCommand('runql.markdownView.focus');
+    }),
+    vscode.commands.registerCommand("runql.markdown.save", () => {
+      markdownViewProvider.save();
+    }),
+    vscode.commands.registerCommand("runql.markdown.reload", () => {
+      markdownViewProvider.reloadFromDisk();
     })
   );
 
