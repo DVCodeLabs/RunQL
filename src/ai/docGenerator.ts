@@ -4,6 +4,7 @@ import { canonicalizeSql } from '../core/hashing';
 import { fileExists } from '../core/fsWorkspace';
 import { loadConnectionProfiles } from '../connections/connectionStore';
 import { getConfiguredAIProvider, openAiProviderSettings } from './aiService';
+import { createFileEditingBrokerPrompt, maybeHandleBrokerTask } from './broker';
 import { buildSchemaContext } from './schemaContext';
 import { loadPromptTemplate, renderPrompt } from './prompts';
 import { ErrorHandler, ErrorSeverity, formatAIError } from '../core/errorHandler';
@@ -43,6 +44,35 @@ export async function generateMarkdownDoc(context: vscode.ExtensionContext) {
         await MarkdownViewProvider.current.showAndFocus(sqlUri);
     }
 
+    const schemaContext = await buildSchemaContext(sqlText, connectionId);
+    const promptTemplate = await loadPromptTemplate("markdownDoc");
+    const prompt = renderPrompt(promptTemplate, {
+        sql: sqlText,
+        dialect,
+        connection: connectionName,
+        schemaContext: schemaContext ? `Schema context:\n${schemaContext}` : ""
+    });
+
+    const workspaceRoot = vscode.workspace.getWorkspaceFolder(sqlUri)?.uri.fsPath ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? path.dirname(sqlUri.fsPath);
+    const brokerResult = await maybeHandleBrokerTask({
+        title: "Generate SQL Markdown documentation",
+        prompt: createFileEditingBrokerPrompt(prompt, {
+            workspaceRoot,
+            targetFiles: [mdUri.fsPath],
+            primaryTarget: mdUri.fsPath,
+            allowCommands: false
+        }),
+        workspaceRoot,
+        targetFiles: [mdUri.fsPath],
+        expectedWriteTargets: [mdUri.fsPath],
+        contextFiles: [sqlUri.fsPath, mdUri.fsPath],
+        primaryTarget: mdUri.fsPath,
+        allowCommands: false
+    });
+    if (brokerResult?.handled) {
+        return;
+    }
+
     const provider = await getConfiguredAIProvider(context, { requireConfigured: true });
     if (!provider) {
         const picked = await vscode.window.showWarningMessage(
@@ -57,15 +87,6 @@ export async function generateMarkdownDoc(context: vscode.ExtensionContext) {
         }
         return;
     }
-
-    const schemaContext = await buildSchemaContext(sqlText, connectionId);
-    const promptTemplate = await loadPromptTemplate("markdownDoc");
-    const prompt = renderPrompt(promptTemplate, {
-        sql: sqlText,
-        dialect,
-        connection: connectionName,
-        schemaContext: schemaContext ? `Schema context:\n${schemaContext}` : ""
-    });
 
     await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,

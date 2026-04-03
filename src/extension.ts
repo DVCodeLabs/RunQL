@@ -1644,6 +1644,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     vscode.commands.registerCommand("runql.ai.selectModel", async () => {
       const { selectAIModel } = require('./ai/aiService');
       await selectAIModel();
+    }),
+    vscode.commands.registerCommand("runql.ai.selectInstalledExtension", async () => {
+      const { selectInstalledExtensionChoice } = require('./ai/broker');
+      await selectInstalledExtensionChoice();
     })
   );
 
