@@ -73,3 +73,8 @@ Redesign AI settings, add What's New guidance, and normalize AI settings across 
 - keep user and workspace AI settings synchronized after config changes
 - clear removed legacy AI keys to avoid stale workspace overrides
 - update README and docs to reflect the new AI setup model
+
+## [1.5.1] - 2026-04-15
+
+### Added
+- Redeploy for the full IDE build process.
