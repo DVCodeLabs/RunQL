@@ -201,7 +201,9 @@ interface ProviderConfig {
 
 const DIRECT_API_PROVIDERS: DirectApiProviderOption[] = ["openai", "anthropic", "azureOpenAI", "ollama", "openaiCompatible"];
 
-function hasExplicitConfigValue<T>(inspection: vscode.ConfigurationInspect<T> | undefined): boolean {
+type ConfigInspection<T> = ReturnType<vscode.WorkspaceConfiguration['inspect']> & { globalValue?: T; workspaceValue?: T; workspaceFolderValue?: T };
+
+function hasExplicitConfigValue<T>(inspection: ConfigInspection<T> | undefined): boolean {
     return inspection?.globalValue !== undefined
         || inspection?.workspaceValue !== undefined
         || inspection?.workspaceFolderValue !== undefined;
