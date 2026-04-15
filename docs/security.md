@@ -16,8 +16,8 @@ This guide describes how to operate RunQL safely in local-first and team environ
 
 ## AI Provider Safety
 
-- Use `runql.ai.provider = none` for fully offline/no-AI environments.
-- For hosted providers, treat endpoint and credentials as sensitive.
+- Use `runql.ai.source = off` for fully offline/no-AI environments.
+- For hosted providers, treat API base URLs and credentials as sensitive.
 - For local models (for example, Ollama), verify local endpoint controls.
 
 ## Artifact Review Before Commit

@@ -2,15 +2,26 @@ import * as vscode from 'vscode';
 import { isProjectInitialized, updateProjectInitializedContext } from '../core/isProjectInitialized';
 import { fileExists } from '../core/fsWorkspace';
 
+type WelcomeMode = 'welcome' | 'whatsNew';
+
+interface WelcomeRenderOptions {
+    mode?: WelcomeMode;
+    version?: string;
+}
+
 export class WelcomeView {
     public static currentPanel: WelcomeView | undefined;
     private readonly _panel: vscode.WebviewPanel;
     private readonly _extensionUri: vscode.Uri;
+    private _mode: WelcomeMode;
+    private _version?: string;
     private _disposables: vscode.Disposable[] = [];
 
-    private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri) {
+    private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, options: WelcomeRenderOptions = {}) {
         this._panel = panel;
         this._extensionUri = extensionUri;
+        this._mode = options.mode ?? 'welcome';
+        this._version = options.version;
 
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
         vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -20,8 +31,14 @@ export class WelcomeView {
         this._setWebviewMessageListener(this._panel.webview);
     }
 
-    public static render(extensionUri: vscode.Uri) {
+    public static render(extensionUri: vscode.Uri, options: WelcomeRenderOptions = {}) {
+        const mode = options.mode ?? 'welcome';
+        const title = mode === 'whatsNew' ? "What's New in RunQL" : 'Welcome to RunQL';
+
         if (WelcomeView.currentPanel) {
+            WelcomeView.currentPanel._mode = mode;
+            WelcomeView.currentPanel._version = options.version;
+            WelcomeView.currentPanel._panel.title = title;
             WelcomeView.currentPanel._panel.reveal(vscode.ViewColumn.One);
             // Refresh status
             WelcomeView.currentPanel._sendStatus();
@@ -30,7 +47,7 @@ export class WelcomeView {
 
         const panel = vscode.window.createWebviewPanel(
             'dpWelcome',
-            'Welcome to RunQL',
+            title,
             vscode.ViewColumn.One,
             {
                 enableScripts: true,
@@ -39,13 +56,19 @@ export class WelcomeView {
             }
         );
 
-        WelcomeView.currentPanel = new WelcomeView(panel, extensionUri);
+        WelcomeView.currentPanel = new WelcomeView(panel, extensionUri, options);
     }
 
     private async _sendStatus() {
         const initialized = await isProjectInitialized();
         const hasWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
-        this._panel.webview.postMessage({ command: 'setStatus', initialized, hasWorkspace });
+        this._panel.webview.postMessage({
+            command: 'setStatus',
+            initialized,
+            hasWorkspace,
+            mode: this._mode,
+            version: this._version
+        });
     }
 
     public dispose() {

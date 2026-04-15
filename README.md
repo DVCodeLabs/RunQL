@@ -80,9 +80,10 @@ RunQL initializes a `RunQL/` structure for queries, schemas, and system artifact
 Common settings (VS Code settings key prefix: `runql.`):
 
 - `runql.query.maxRowsLimit`: hard result limit for SELECT queries (`0` disables limit)
-- `runql.ai.provider`: `none|vscode|openai|anthropic|azureOpenAI|ollama|openaiCompatible`
-- `runql.ai.model`: provider-specific model selection
-- `runql.ai.endpoint`: custom endpoint for local/self-hosted providers
+- `runql.ai.source`: `automatic|githubCopilot|aiExtension|directApi|off`
+- `runql.ai.apiProvider`: direct API provider selection when `runql.ai.source = directApi`
+- `runql.ai.model`: AI model selection
+- `runql.ai.apiBaseUrl`: custom base URL for Azure OpenAI, OpenAI-compatible APIs, or non-default Ollama setups
 - `runql.ai.sendSchemaContext`: include schema context in AI prompts
 - `runql.format.enabled`: enable SQL formatting
 

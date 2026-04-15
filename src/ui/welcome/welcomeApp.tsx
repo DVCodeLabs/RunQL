@@ -16,6 +16,13 @@ type InitStructureEntry = {
 };
 
 type StructureIconKind = 'folder' | 'file';
+type WelcomeMode = 'welcome' | 'whatsNew';
+
+type AISettingDoc = {
+    name: string;
+    summary: string;
+    details: string;
+};
 
 // Folder + default file structure that Initialize creates
 const INIT_STRUCTURE: InitStructureEntry[] = [
@@ -29,6 +36,34 @@ const INIT_STRUCTURE: InitStructureEntry[] = [
     {
         folder: 'RunQL/system/prompts',
         files: ['markdownDoc.txt', 'inlineComments.txt', 'describeSchema.txt']
+    }
+];
+
+const AI_SETTINGS: AISettingDoc[] = [
+    {
+        name: 'AI Source',
+        summary: 'Choose how RunQL should access AI.',
+        details: 'Use GitHub Copilot / VS Code AI for the built-in VS Code path, AI Extension for Claude Code or Codex handoff, Direct API for your own provider, or Off to disable AI.'
+    },
+    {
+        name: 'AI Extension',
+        summary: 'Pick the extension RunQL should use when AI Source is AI Extension.',
+        details: 'Choose Claude Code or Codex. Leave it on Automatic if you want RunQL to choose from supported installed extensions.'
+    },
+    {
+        name: 'API Provider',
+        summary: 'Choose the provider for Direct API.',
+        details: 'Use OpenAI, Anthropic, Azure OpenAI, Ollama, or OpenAI-Compatible depending on where your model lives.'
+    },
+    {
+        name: 'AI Model',
+        summary: 'Choose a model when your AI source supports it.',
+        details: 'This is used by GitHub Copilot / VS Code AI and Direct API. It is ignored for AI Extension.'
+    },
+    {
+        name: 'API Base URL',
+        summary: 'Enter a custom base URL only when your provider needs one.',
+        details: 'This is usually required for Azure OpenAI and OpenAI-compatible servers, and optional for Ollama if you are not using the default local URL.'
     }
 ];
 
@@ -164,6 +199,11 @@ const styles: Record<string, React.CSSProperties> = {
         display: 'block',
         padding: '4px 0'
     },
+    inlineLink: {
+        color: 'var(--vscode-textLink-foreground)',
+        textDecoration: 'none',
+        cursor: 'pointer'
+    },
     statusPanel: {
         backgroundColor: 'var(--vscode-textCodeBlock-background)',
         borderRadius: '4px',
@@ -234,6 +274,57 @@ const styles: Record<string, React.CSSProperties> = {
         height: '14px',
         color: 'var(--vscode-descriptionForeground)',
         flex: '0 0 auto'
+    },
+    lead: {
+        marginTop: '10px',
+        marginBottom: 0,
+        fontSize: '14px',
+        color: 'var(--vscode-descriptionForeground)',
+        lineHeight: 1.5
+    },
+    callout: {
+        marginTop: '12px',
+        padding: '12px 14px',
+        backgroundColor: 'var(--vscode-textBlockQuote-background)',
+        borderLeft: '3px solid var(--vscode-textLink-activeForeground)',
+        borderRadius: '4px',
+        fontSize: '13px',
+        lineHeight: 1.5
+    },
+    settingsGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+        gap: '10px'
+    },
+    settingCard: {
+        padding: '12px',
+        backgroundColor: 'var(--vscode-textCodeBlock-background)',
+        borderRadius: '4px',
+        border: '1px solid var(--vscode-panel-border)'
+    },
+    settingName: {
+        margin: 0,
+        marginBottom: '6px',
+        fontSize: '13px',
+        fontWeight: 700
+    },
+    settingSummary: {
+        margin: 0,
+        marginBottom: '6px',
+        fontSize: '13px'
+    },
+    settingDetails: {
+        margin: 0,
+        fontSize: '12px',
+        color: 'var(--vscode-descriptionForeground)',
+        lineHeight: 1.45
+    },
+    bulletList: {
+        margin: '10px 0 0 18px',
+        padding: 0,
+        color: 'var(--vscode-descriptionForeground)',
+        fontSize: '13px',
+        lineHeight: 1.5
     }
 };
 
@@ -267,6 +358,8 @@ function StructureIcon({ kind }: { kind: StructureIconKind }) {
 function App() {
     const [initialized, setInitialized] = useState<boolean | null>(null);
     const [hasWorkspace, setHasWorkspace] = useState<boolean | null>(null);
+    const [mode, setMode] = useState<WelcomeMode>('welcome');
+    const [version, setVersion] = useState<string>('');
 
     useEffect(() => {
         // Listen for messages from extension
@@ -275,6 +368,8 @@ function App() {
             if (message.command === 'setStatus') {
                 setInitialized(message.initialized);
                 setHasWorkspace(message.hasWorkspace);
+                setMode((message.mode as WelcomeMode) || 'welcome');
+                setVersion((message.version as string) || '');
             }
         };
         window.addEventListener('message', handler);
@@ -312,18 +407,49 @@ function App() {
     const step2Complete = initialized === true;
     const step1Active = hasWorkspace === false;
     const step2Active = hasWorkspace === true && initialized === false;
+    const isWhatsNew = mode === 'whatsNew';
 
     return (
         <div style={styles.container}>
             {/* Header */}
             <div style={styles.header}>
                 <h1 style={styles.title}>
-                    RunQL
+                    {isWhatsNew ? "What's New in RunQL" : 'RunQL'}
                 </h1>
-                <p style={styles.trustStatement}>
-                    RunQL will not create project files until you click Initialize.
-                </p>
+                {isWhatsNew ? (
+                    <>
+                        <p style={styles.lead}>
+                            {version ? `Version ${version} includes a simpler AI settings model.` : 'This update includes a simpler AI settings model.'}
+                        </p>
+                        <div style={styles.callout}>
+                            RunQL now groups AI setup around five settings: AI Source, AI Extension, API Provider, AI Model, and API Base URL.
+                        </div>
+                    </>
+                ) : (
+                    <p style={styles.trustStatement}>
+                        RunQL will not create project files until you click Initialize.
+                    </p>
+                )}
             </div>
+
+            {isWhatsNew && (
+                <div style={styles.card}>
+                    <h2 style={styles.cardTitle}>AI Settings Have Changed</h2>
+                    <p style={{ ...styles.statusNote, marginBottom: '8px' }}>
+                        The old backend and broker terminology has been removed from Settings. RunQL now uses a simpler AI setup model.
+                    </p>
+                    <ul style={styles.bulletList}>
+                        <li>Use <strong>GitHub Copilot / VS Code AI</strong> when you want RunQL to use the VS Code-native AI path.</li>
+                        <li>Use <strong>AI Extension</strong> when you want Claude Code or Codex to handle supported AI tasks.</li>
+                        <li>Use <strong>Direct API</strong> when you want to connect OpenAI, Anthropic, Azure OpenAI, Ollama, or another compatible endpoint.</li>
+                    </ul>
+                    <p style={{ ...styles.statusNote, marginTop: '8px', marginBottom: 0 }}>
+                        Learn more in the <a href="#ai-settings-guide" style={styles.inlineLink}>
+                            AI Settings Guide
+                        </a> below.
+                    </p>
+                </div>
+            )}
 
             {/* Workspace Status */}
             <div style={styles.card}>
@@ -505,6 +631,27 @@ function App() {
                             Community & Support
                         </a>
                     </li>
+                </ul>
+            </div>
+
+            <div id="ai-settings-guide" style={styles.card}>
+                <h2 style={styles.cardTitle}>AI Settings Guide</h2>
+                <p style={{ ...styles.statusNote, marginBottom: '12px' }}>
+                    These are the settings that matter for AI setup in RunQL. Start with AI Source, then only fill in the settings that match that choice.
+                </p>
+                <div style={styles.settingsGrid}>
+                    {AI_SETTINGS.map((setting) => (
+                        <div key={setting.name} style={styles.settingCard}>
+                            <h3 style={styles.settingName}>{setting.name}</h3>
+                            <p style={styles.settingSummary}>{setting.summary}</p>
+                            <p style={styles.settingDetails}>{setting.details}</p>
+                        </div>
+                    ))}
+                </div>
+                <ul style={styles.bulletList}>
+                    <li>If you choose <strong>GitHub Copilot / VS Code AI</strong>, you usually only need AI Model.</li>
+                    <li>If you choose <strong>AI Extension</strong>, you usually only need AI Extension.</li>
+                    <li>If you choose <strong>Direct API</strong>, you usually need API Provider, AI Model, and sometimes API Base URL.</li>
                 </ul>
             </div>
 

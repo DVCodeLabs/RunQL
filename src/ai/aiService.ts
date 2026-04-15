@@ -3,13 +3,109 @@ import { Logger } from '../core/logger';
 import { formatAIError } from '../core/errorHandler';
 
 const CONFIG_SECTION = 'runql';
+const AI_SETTINGS_NORMALIZATION_KEY = 'runql.ai.settingsNormalizedVersion';
+const AI_SETTINGS_RESET_TOKEN = '2026-04-ai-reset-v2';
+const LEGACY_AI_SETTING_KEYS = [
+    'ai.backend',
+    'ai.broker',
+    'ai.installedExtensionChoice',
+    'ai.provider',
+    'ai.endpoint'
+] as const;
+const SYNCED_AI_SETTING_KEYS = [
+    'ai.source',
+    'ai.extension',
+    'ai.apiProvider',
+    'ai.model',
+    'ai.apiBaseUrl',
+    'ai.sendSchemaContext',
+    'ai.maxSchemaChars'
+] as const;
 
-async function updateConfig(key: string, value: string): Promise<void> {
+type ConfigValue = string | number | boolean | undefined;
+type SettingSnapshotEntry = { globalValue: ConfigValue; workspaceValue: ConfigValue };
+type SettingSnapshot = Record<string, SettingSnapshotEntry>;
+let isSyncingAiSettings = false;
+let lastAiSettingsSnapshot: SettingSnapshot | null = null;
+
+function getConfigTargets(): vscode.ConfigurationTarget[] {
+    return vscode.workspace.workspaceFolders?.length
+        ? [vscode.ConfigurationTarget.Global, vscode.ConfigurationTarget.Workspace]
+        : [vscode.ConfigurationTarget.Global];
+}
+
+async function updateConfigForTargets(key: string, value: ConfigValue, targets = getConfigTargets()): Promise<void> {
     const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-    await config.update(key, value, vscode.ConfigurationTarget.Global);
-    if (vscode.workspace.workspaceFolders?.length) {
-        await config.update(key, value, vscode.ConfigurationTarget.Workspace);
+    for (const target of targets) {
+        await config.update(key, value, target);
     }
+}
+
+async function updateConfig(key: string, value: ConfigValue): Promise<void> {
+    await updateConfigForTargets(key, value);
+}
+
+async function syncAiSettingKey<T extends ConfigValue>(config: vscode.WorkspaceConfiguration, key: string, value: T): Promise<void> {
+    const inspection = config.inspect<T>(key);
+    const targets = getConfigTargets();
+
+    for (const target of targets) {
+        const current =
+            target === vscode.ConfigurationTarget.Global ? inspection?.globalValue :
+            target === vscode.ConfigurationTarget.Workspace ? inspection?.workspaceValue :
+            inspection?.workspaceFolderValue;
+
+        if (current !== value) {
+            await config.update(key, value, target);
+        }
+    }
+}
+
+function captureAiSettingsSnapshot(): SettingSnapshot {
+    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    const snapshot: SettingSnapshot = {};
+
+    for (const key of [...SYNCED_AI_SETTING_KEYS, ...LEGACY_AI_SETTING_KEYS]) {
+        const inspection = config.inspect<ConfigValue>(key);
+        snapshot[key] = {
+            globalValue: inspection?.globalValue,
+            workspaceValue: inspection?.workspaceValue
+        };
+    }
+
+    return snapshot;
+}
+
+function getChangedScopeValue(key: string, fallback: ConfigValue): ConfigValue {
+    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    const inspection = config.inspect<ConfigValue>(key);
+    const previous = lastAiSettingsSnapshot?.[key];
+    const currentGlobal = inspection?.globalValue;
+    const currentWorkspace = inspection?.workspaceValue;
+
+    if (!previous) {
+        return fallback;
+    }
+
+    const globalChanged = currentGlobal !== previous.globalValue;
+    const workspaceChanged = currentWorkspace !== previous.workspaceValue;
+
+    if (globalChanged && !workspaceChanged) {
+        return currentGlobal;
+    }
+
+    if (workspaceChanged && !globalChanged) {
+        return currentWorkspace;
+    }
+
+    if (globalChanged && workspaceChanged) {
+        if (currentWorkspace === currentGlobal) {
+            return currentWorkspace;
+        }
+        return currentWorkspace !== undefined ? currentWorkspace : currentGlobal;
+    }
+
+    return fallback;
 }
 
 /** OpenAI / Azure OpenAI / OpenAI-compatible chat completion response shape */
@@ -82,6 +178,8 @@ This is a mock response. Configure an AI provider to generate real content.
 }
 
 type ProviderName = "vscode" | "openai" | "anthropic" | "azureOpenAI" | "ollama" | "openaiCompatible";
+type AISourceOption = "automatic" | "githubCopilot" | "aiExtension" | "directApi" | "off";
+type DirectApiProviderOption = "openai" | "anthropic" | "azureOpenAI" | "ollama" | "openaiCompatible";
 
 export type AIProviderOption =
     | "none"
@@ -99,6 +197,58 @@ interface ProviderConfig {
     endpoint?: string;
     apiKey?: string;
     source: "agent" | "settings";
+}
+
+const DIRECT_API_PROVIDERS: DirectApiProviderOption[] = ["openai", "anthropic", "azureOpenAI", "ollama", "openaiCompatible"];
+
+function hasExplicitConfigValue<T>(inspection: vscode.ConfigurationInspect<T> | undefined): boolean {
+    return inspection?.globalValue !== undefined
+        || inspection?.workspaceValue !== undefined
+        || inspection?.workspaceFolderValue !== undefined;
+}
+
+function isDirectApiProviderOption(value: string): value is DirectApiProviderOption {
+    return DIRECT_API_PROVIDERS.includes(value as DirectApiProviderOption);
+}
+
+function getConfiguredSource(config: vscode.WorkspaceConfiguration): AISourceOption {
+    const source = config.get<string>('ai.source', 'githubCopilot');
+    if (source === "githubCopilot" || source === "aiExtension" || source === "directApi" || source === "off") {
+        return source;
+    }
+    return "githubCopilot";
+}
+
+function getConfiguredDirectApiProvider(config: vscode.WorkspaceConfiguration): DirectApiProviderOption | "" {
+    const direct = config.get<string>('ai.apiProvider', '');
+    if (isDirectApiProviderOption(direct)) return direct;
+
+    const legacyBackend = config.get<string>('ai.backend', '');
+    if (isDirectApiProviderOption(legacyBackend)) return legacyBackend;
+
+    const legacyProvider = config.get<string>('ai.provider', '');
+    if (isDirectApiProviderOption(legacyProvider)) return legacyProvider;
+
+    return "";
+}
+
+function getConfiguredApiBaseUrl(config: vscode.WorkspaceConfiguration): string {
+    return config.get<string>('ai.apiBaseUrl', '') || config.get<string>('ai.endpoint', '');
+}
+
+function mapBackendToSource(backend: string): AISourceOption | null {
+    if (backend === "none") return "off";
+    if (backend === "vscodeChatModel") return "githubCopilot";
+    if (isDirectApiProviderOption(backend)) return "directApi";
+    if (backend === "extensionManaged") return "automatic";
+    return null;
+}
+
+function mapLegacyProviderToSource(provider: string): AISourceOption | null {
+    if (provider === "none") return "off";
+    if (provider === "vscode") return "githubCopilot";
+    if (isDirectApiProviderOption(provider)) return "directApi";
+    return null;
 }
 
 /** Maps the deprecated legacy provider setting value to the new AIProviderOption. */
@@ -139,22 +289,117 @@ function detectHostEnvironment(): "stockVSCode" | "bundledIDE" {
 }
 
 /**
- * Migrates the deprecated `runql.ai.provider` setting to `runql.ai.backend`.
- * Safe to call multiple times — no-ops if already set.
+ * Migrates legacy AI settings to the simplified source/provider model.
+ * Safe to call multiple times — existing new settings win.
  */
 export async function migrateAiProviderSetting(): Promise<void> {
     const config = vscode.workspace.getConfiguration('runql');
-    const current = config.get<string>('ai.backend', '');
-    if (current) return; // Already set, nothing to migrate
+    const sourceInspection = config.inspect<string>('ai.source');
+    const apiProviderInspection = config.inspect<string>('ai.apiProvider');
+    const extensionInspection = config.inspect<string>('ai.extension');
+    const apiBaseUrlInspection = config.inspect<string>('ai.apiBaseUrl');
 
+    const legacyBackend = config.get<string>('ai.backend', '');
     const legacyProvider = config.get<string>('ai.provider', '');
-    if (legacyProvider && legacyProvider !== 'vscode') {
-        // User had explicitly changed from default — migrate their choice
-        const mapped = mapLegacyProvider(legacyProvider);
-        await updateConfig('ai.backend', mapped);
-        Logger.info(`Migrated runql.ai.provider="${legacyProvider}" to runql.ai.backend="${mapped}"`);
+    const legacyBroker = config.get<string>('ai.broker', 'auto');
+    const legacyInstalledExtension = config.get<string>('ai.installedExtensionChoice', '');
+    const legacyEndpoint = config.get<string>('ai.endpoint', '');
+
+    if (!hasExplicitConfigValue(sourceInspection)) {
+        let mappedSource: AISourceOption | null = null;
+
+        if (legacyBroker === 'claudeExtension' || legacyBroker === 'codexExtension' || legacyInstalledExtension) {
+            mappedSource = 'aiExtension';
+        } else if (legacyBackend) {
+            mappedSource = mapBackendToSource(legacyBackend);
+        } else if (legacyProvider) {
+            mappedSource = mapLegacyProviderToSource(legacyProvider);
+        }
+
+        if (mappedSource) {
+            await updateConfig('ai.source', mappedSource);
+            Logger.info(`Migrated legacy AI selection to runql.ai.source="${mappedSource}"`);
+        }
     }
-    // If provider was default "vscode" or empty, leave empty for auto-detection
+
+    if (!hasExplicitConfigValue(apiProviderInspection)) {
+        const mappedProvider = getConfiguredDirectApiProvider(config);
+        if (mappedProvider) {
+            await updateConfig('ai.apiProvider', mappedProvider);
+            Logger.info(`Migrated legacy AI provider to runql.ai.apiProvider="${mappedProvider}"`);
+        }
+    }
+
+    if (!hasExplicitConfigValue(extensionInspection)) {
+        const mappedExtension = legacyInstalledExtension || (legacyBroker === 'claudeExtension' || legacyBroker === 'codexExtension' ? legacyBroker : '');
+        if (mappedExtension) {
+            await updateConfig('ai.extension', mappedExtension);
+            Logger.info(`Migrated legacy AI extension to runql.ai.extension="${mappedExtension}"`);
+        }
+    }
+
+    if (!hasExplicitConfigValue(apiBaseUrlInspection) && legacyEndpoint) {
+        await updateConfig('ai.apiBaseUrl', legacyEndpoint);
+        Logger.info('Migrated runql.ai.endpoint to runql.ai.apiBaseUrl');
+    }
+
+}
+
+export async function normalizeAiSettings(context: vscode.ExtensionContext, version: string): Promise<void> {
+    const normalizedVersion = context.workspaceState.get<string>(AI_SETTINGS_NORMALIZATION_KEY);
+    if (normalizedVersion === `${version}:${AI_SETTINGS_RESET_TOKEN}`) {
+        return;
+    }
+
+    await updateConfigForTargets('ai.source', 'githubCopilot');
+    await updateConfigForTargets('ai.extension', '');
+    await updateConfigForTargets('ai.apiProvider', '');
+    await updateConfigForTargets('ai.model', 'gpt-4.1');
+    await updateConfigForTargets('ai.apiBaseUrl', '');
+    await updateConfigForTargets('ai.sendSchemaContext', true);
+    await updateConfigForTargets('ai.maxSchemaChars', 150000);
+
+    for (const key of LEGACY_AI_SETTING_KEYS) {
+        await updateConfigForTargets(key, undefined);
+    }
+
+    lastAiSettingsSnapshot = captureAiSettingsSnapshot();
+    await context.workspaceState.update(AI_SETTINGS_NORMALIZATION_KEY, `${version}:${AI_SETTINGS_RESET_TOKEN}`);
+    Logger.info(`Reset AI settings to release defaults across user/workspace scopes for version ${version} (${AI_SETTINGS_RESET_TOKEN})`);
+}
+
+export async function syncAiSettingsAcrossScopes(): Promise<void> {
+    if (isSyncingAiSettings) {
+        return;
+    }
+
+    isSyncingAiSettings = true;
+    try {
+        const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+        await syncAiSettingKey(config, 'ai.source', getChangedScopeValue('ai.source', getConfiguredSource(config)));
+        await syncAiSettingKey(config, 'ai.extension', getChangedScopeValue('ai.extension', config.get<string>('ai.extension', '')));
+        await syncAiSettingKey(config, 'ai.apiProvider', getChangedScopeValue('ai.apiProvider', getConfiguredDirectApiProvider(config)));
+        await syncAiSettingKey(config, 'ai.model', getChangedScopeValue('ai.model', config.get<string>('ai.model', 'gpt-4.1')));
+        await syncAiSettingKey(config, 'ai.apiBaseUrl', getChangedScopeValue('ai.apiBaseUrl', config.get<string>('ai.apiBaseUrl', '')));
+        await syncAiSettingKey(config, 'ai.sendSchemaContext', getChangedScopeValue('ai.sendSchemaContext', config.get<boolean>('ai.sendSchemaContext', true)));
+        await syncAiSettingKey(config, 'ai.maxSchemaChars', getChangedScopeValue('ai.maxSchemaChars', config.get<number>('ai.maxSchemaChars', 150000)));
+
+        for (const key of LEGACY_AI_SETTING_KEYS) {
+            await syncAiSettingKey(config, key, undefined);
+        }
+
+        lastAiSettingsSnapshot = captureAiSettingsSnapshot();
+    } finally {
+        isSyncingAiSettings = false;
+    }
+}
+
+export function isAiSettingsSyncInProgress(): boolean {
+    return isSyncingAiSettings;
+}
+
+export function initializeAiSettingsSyncSnapshot(): void {
+    lastAiSettingsSnapshot = captureAiSettingsSnapshot();
 }
 
 /**
@@ -163,6 +408,27 @@ export async function migrateAiProviderSetting(): Promise<void> {
  */
 async function resolveAIProvider(context: vscode.ExtensionContext): Promise<{ provider: AIProviderOption; config: ProviderConfig | null }> {
     const cfg = vscode.workspace.getConfiguration('runql');
+    const source = getConfiguredSource(cfg);
+
+    if (source === "off") {
+        return { provider: "none", config: null };
+    }
+
+    if (source === "githubCopilot") {
+        return { provider: "vscodeChatModel", config: await resolveConfigForProvider("vscodeChatModel", context) };
+    }
+
+    if (source === "directApi") {
+        const selectedProvider = getConfiguredDirectApiProvider(cfg);
+        if (!selectedProvider) {
+            return { provider: "none", config: null };
+        }
+        return { provider: selectedProvider, config: await resolveConfigForProvider(selectedProvider, context) };
+    }
+
+    if (source === "aiExtension") {
+        return { provider: "none", config: null };
+    }
 
     // 1. Check new setting first
     const selected = cfg.get<string>('ai.backend', '');
@@ -222,7 +488,7 @@ async function resolveConfigForProvider(option: AIProviderOption, context: vscod
 
     const config = vscode.workspace.getConfiguration('runql');
     const model = config.get<string>('ai.model', '');
-    const endpoint = config.get<string>('ai.endpoint', '');
+    const endpoint = getConfiguredApiBaseUrl(config);
     const apiKey = await context.secrets.get('runql.ai.apiKey');
 
     return resolveConfig({
@@ -281,11 +547,40 @@ export async function openAiProviderSettings(): Promise<void> {
 
 async function getSettingsConfig(context: vscode.ExtensionContext): Promise<ProviderConfig | null> {
     const config = vscode.workspace.getConfiguration('runql');
+    const source = getConfiguredSource(config);
+
+    if (source === "off" || source === "aiExtension") return null;
+
+    if (source === "githubCopilot") {
+        return {
+            provider: "vscode",
+            model: config.get<string>('ai.model', ''),
+            source: "settings"
+        };
+    }
+
+    if (source === "directApi") {
+        const directProvider = getConfiguredDirectApiProvider(config);
+        if (!directProvider) return null;
+
+        const model = config.get<string>('ai.model', '');
+        const endpoint = getConfiguredApiBaseUrl(config);
+        const apiKey = await context.secrets.get('runql.ai.apiKey');
+
+        return {
+            provider: directProvider,
+            model,
+            endpoint,
+            apiKey: apiKey || undefined,
+            source: "settings"
+        };
+    }
+
     const provider = config.get<string>('ai.provider', 'vscode');
     if (!provider || provider === "none") return null;
 
     const model = config.get<string>('ai.model', '');
-    const endpoint = config.get<string>('ai.endpoint', '');
+    const endpoint = getConfiguredApiBaseUrl(config);
     const apiKey = await context.secrets.get('runql.ai.apiKey');
 
     return {

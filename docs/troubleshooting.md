@@ -46,8 +46,8 @@
 ## AI Issues
 
 ### No model/provider available
-- Set `runql.ai.provider` and `runql.ai.model`.
-- For local providers, verify endpoint and local model availability.
+- Set `runql.ai.source` first, then configure `runql.ai.model` and any matching `runql.ai.apiProvider` or `runql.ai.apiBaseUrl` settings.
+- For local providers, verify API base URL and local model availability.
 - For hosted providers, verify credentials and network access.
 
 ### Unexpected AI output

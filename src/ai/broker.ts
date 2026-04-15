@@ -61,10 +61,37 @@ const CODEX_COMMAND_OPEN = ['chatgpt.openSidebar', 'chatgpt.newCodexPanel'];
 
 function getConfig(): BrokerConfig {
     const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    const source = config.get<string>('ai.source', 'githubCopilot');
+    const preferredExtension = config.get<string>('ai.extension', '') || config.get<string>('ai.installedExtensionChoice', '');
+
+    if (source === 'aiExtension') {
+        return {
+            broker: preferredExtension || 'auto',
+            backend: '',
+            installedExtensionChoice: preferredExtension
+        };
+    }
+
+    if (source === 'automatic' && (preferredExtension === 'claudeExtension' || preferredExtension === 'codexExtension')) {
+        return {
+            broker: preferredExtension,
+            backend: '',
+            installedExtensionChoice: preferredExtension
+        };
+    }
+
+    if (source === 'githubCopilot' || source === 'directApi' || source === 'off') {
+        return {
+            broker: 'none',
+            backend: '',
+            installedExtensionChoice: preferredExtension
+        };
+    }
+
     return {
         broker: config.get<string>('ai.broker', 'auto'),
         backend: config.get<string>('ai.backend', ''),
-        installedExtensionChoice: config.get<string>('ai.installedExtensionChoice', '')
+        installedExtensionChoice: preferredExtension
     };
 }
 
@@ -113,16 +140,18 @@ export async function selectInstalledExtensionChoice(): Promise<void> {
         detail: option.detail,
         option
     })), {
-        title: 'Select Installed AI Extension',
-        placeHolder: 'Choose which installed AI extension RunQL should use by default'
+        title: 'Select AI Extension',
+        placeHolder: 'Choose which installed AI extension RunQL should use'
     });
 
     if (!picked) {
         return;
     }
 
+    await updateConfig('ai.source', 'aiExtension');
+    await updateConfig('ai.extension', picked.option.id);
     await updateConfig('ai.installedExtensionChoice', picked.option.id);
-    vscode.window.showInformationMessage(`Installed AI extension set to ${picked.option.label}.`);
+    vscode.window.showInformationMessage(`AI extension set to ${picked.option.label}.`);
 }
 
 export async function maybeHandleBrokerTask(task: BrokerTask): Promise<BrokerResult | null> {
@@ -185,11 +214,12 @@ async function resolveBroker(config: BrokerConfig): Promise<{ id: BrokerId } | n
                 detail: option.detail,
                 option
             })), {
-                title: 'Choose Installed AI Extension',
+                title: 'Choose AI Extension',
                 placeHolder: 'Select which installed AI extension RunQL should use'
             });
             if (picked) {
                 chosen = picked.option.id;
+                await updateConfig('ai.extension', chosen);
                 await updateConfig('ai.installedExtensionChoice', chosen);
             }
         }

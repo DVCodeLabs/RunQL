@@ -69,12 +69,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
   Logger.initialize("RunQL");
   Logger.info("RunQL extension activating...");
 
-  // Migrate deprecated runql.ai.provider → runql.ai.backend
-  const { migrateAiProviderSetting } = await import('./ai/aiService');
+  const extensionVersion = String((context.extension.packageJSON as { version?: string } | undefined)?.version ?? "");
+  const previousExtensionVersion = context.globalState.get<string>("runql.lastExtensionVersion");
+
+  // Migrate legacy AI settings to the simplified source/provider model
+  const { migrateAiProviderSetting, normalizeAiSettings, initializeAiSettingsSyncSnapshot } = await import('./ai/aiService');
   await migrateAiProviderSetting();
+  await normalizeAiSettings(context, extensionVersion || 'dev');
+  initializeAiSettingsSyncSnapshot();
 
   let projectInitializedAtStartup = false;
   let autoWelcomeShownThisSession = false;
+  let autoWhatsNewShownThisSession = false;
   const tablePreviewContextByDocUri = new Map<string, {
     sql: string;
     source: QueryResultSource;
@@ -535,6 +541,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     vscode.commands.registerCommand("runql.welcome.open", () => {
       WelcomeView.render(context.extensionUri);
     }),
+    vscode.commands.registerCommand("runql.whatsNew.open", () => {
+      WelcomeView.render(context.extensionUri, { mode: 'whatsNew', version: extensionVersion });
+    }),
     vscode.commands.registerCommand("runql.project.initialize", async () => {
       try {
         if ((vscode.workspace.workspaceFolders?.length ?? 0) === 0) {
@@ -584,6 +593,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
   const maybeAutoOpenWelcome = async () => {
     try {
       if (autoWelcomeShownThisSession) return;
+      if (autoWhatsNewShownThisSession) return;
       if (await isProjectInitialized()) return;
 
       await vscode.commands.executeCommand("workbench.view.extension.runql");
@@ -593,6 +603,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       Logger.error("Failed to auto-open welcome page", err);
     }
   };
+
+  const maybeAutoOpenWhatsNew = async () => {
+    try {
+      if (autoWhatsNewShownThisSession) return;
+      if (!previousExtensionVersion || !extensionVersion || previousExtensionVersion === extensionVersion) return;
+
+      await vscode.commands.executeCommand("workbench.view.extension.runql");
+      await vscode.commands.executeCommand("runql.whatsNew.open");
+      autoWhatsNewShownThisSession = true;
+    } catch (err) {
+      Logger.error("Failed to auto-open What's New page", err);
+    }
+  };
+
+  await maybeAutoOpenWhatsNew();
 
   // Auto-open sidebar + Welcome when project is not initialized.
   // Covers both activation-time workspaces and folders added after activation.
@@ -606,6 +631,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       void maybeAutoOpenWelcome();
     })
   );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration('runql.ai')) return;
+
+      void (async () => {
+        const { syncAiSettingsAcrossScopes, isAiSettingsSyncInProgress } = await import('./ai/aiService');
+        if (isAiSettingsSyncInProgress()) return;
+        await syncAiSettingsAcrossScopes();
+      })();
+    })
+  );
+
+  if (extensionVersion && previousExtensionVersion !== extensionVersion) {
+    await context.globalState.update("runql.lastExtensionVersion", extensionVersion);
+  }
 
   // Insert text helper used by schema tree clicks
   context.subscriptions.push(

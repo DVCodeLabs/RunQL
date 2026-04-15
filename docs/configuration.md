@@ -11,20 +11,33 @@ RunQL settings use the `runql.` prefix in VS Code.
 
 ## AI
 
-### `runql.ai.provider`
+### `runql.ai.source`
 - Type: string enum
-- Values: `none`, `vscode`, `openai`, `anthropic`, `azureOpenAI`, `ollama`, `openaiCompatible`
-- Default: `vscode`
+- Values: `automatic`, `githubCopilot`, `aiExtension`, `directApi`, `off`
+- Default: `githubCopilot`
+- Description: choose how RunQL should access AI.
+
+### `runql.ai.extension`
+- Type: string enum
+- Values: empty, `claudeExtension`, `codexExtension`
+- Default: empty
+- Description: preferred installed extension when `runql.ai.source` is `aiExtension`.
+
+### `runql.ai.apiProvider`
+- Type: string enum
+- Values: empty, `openai`, `anthropic`, `azureOpenAI`, `ollama`, `openaiCompatible`
+- Default: empty
+- Description: direct API provider used when `runql.ai.source` is `directApi`.
 
 ### `runql.ai.model`
 - Type: string
-- Default: `gpt-4o`
-- Description: provider-specific model identifier.
+- Default: `gpt-4.1`
+- Description: model or deployment name for GitHub Copilot / VS Code AI and direct API providers.
 
-### `runql.ai.endpoint`
+### `runql.ai.apiBaseUrl`
 - Type: string
 - Default: empty
-- Description: custom endpoint for compatible or self-hosted providers.
+- Description: base URL for providers that need a custom server address; required for `azureOpenAI` and `openaiCompatible`.
 
 ### `runql.ai.sendSchemaContext`
 - Type: boolean
