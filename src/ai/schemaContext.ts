@@ -37,10 +37,7 @@ export async function buildSchemaContext(sqlText: string, connectionId?: string)
 
     const context: SchemaContextData = { tables: [], meta: [], relationships: [] };
 
-    const safeName = introspection.connectionName
-        ? introspection.connectionName.replace(/[^a-z0-9_\-\.]/gi, '_')
-        : introspection.connectionId;
-    const descriptions = await loadDescriptions(safeName);
+    const descriptions = await loadDescriptions(introspection.connectionId, introspection.connectionName);
 
     for (const ref of referenced) {
         const [schemaName, tableName] = ref.split('.');

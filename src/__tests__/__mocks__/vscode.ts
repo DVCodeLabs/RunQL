@@ -142,6 +142,7 @@ export const workspace = {
     createDirectory: jest.fn(),
     readDirectory: jest.fn(),
     stat: jest.fn(),
+    rename: jest.fn(),
   },
   onDidChangeConfiguration: jest.fn(),
   onDidSaveTextDocument: jest.fn(),

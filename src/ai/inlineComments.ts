@@ -2,10 +2,10 @@ import * as vscode from "vscode";
 import * as path from "path";
 import { getConfiguredAIProvider, openAiProviderSettings } from "./aiService";
 import { createFileEditingBrokerPrompt, maybeHandleBrokerTask } from "./broker";
-import { loadConnectionProfiles } from "../connections/connectionStore";
 import { buildSchemaContext } from "./schemaContext";
 import { loadPromptTemplate, renderPrompt } from "./prompts";
 import { streamEdit } from "../editor/editorStreaming";
+import { resolveConnectionInfo } from "./connectionInfo";
 
 export async function generateAndStreamInlineComments(
     context: vscode.ExtensionContext,
@@ -106,29 +106,4 @@ function stripWrappingCodeFence(text: string): string {
         }
     }
     return trimmed;
-}
-
-async function resolveConnectionInfo(
-    context: vscode.ExtensionContext,
-    doc: vscode.TextDocument
-): Promise<{ connectionId?: string; connectionName: string; dialect: string }> {
-    const docKey = doc.uri.toString();
-    const docConnections = context.workspaceState.get<Record<string, string>>("runql.docConnections.v1", {});
-    const docConnId = docConnections[docKey];
-    const activeId = context.workspaceState.get<string>("runql.activeConnectionId");
-    const connectionId = docConnId || activeId;
-
-    let connectionName = "none";
-    let dialect = "unknown";
-
-    if (connectionId) {
-        const profiles = await loadConnectionProfiles();
-        const profile = profiles.find(p => p.id === connectionId);
-        if (profile) {
-            connectionName = profile.name;
-            dialect = profile.dialect;
-        }
-    }
-
-    return { connectionId, connectionName, dialect };
 }

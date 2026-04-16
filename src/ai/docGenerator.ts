@@ -2,13 +2,13 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { canonicalizeSql } from '../core/hashing';
 import { fileExists } from '../core/fsWorkspace';
-import { loadConnectionProfiles } from '../connections/connectionStore';
 import { getConfiguredAIProvider, openAiProviderSettings } from './aiService';
 import { createFileEditingBrokerPrompt, maybeHandleBrokerTask } from './broker';
 import { buildSchemaContext } from './schemaContext';
 import { loadPromptTemplate, renderPrompt } from './prompts';
 import { ErrorHandler, ErrorSeverity, formatAIError } from '../core/errorHandler';
 import { MarkdownViewProvider } from '../markdown/markdownView';
+import { resolveConnectionInfo } from './connectionInfo';
 
 const CONTENT_START = "<!-- RunQL:content:start -->";
 const CONTENT_END = "<!-- RunQL:content:end -->";
@@ -38,7 +38,7 @@ export async function generateMarkdownDoc(context: vscode.ExtensionContext) {
 
     const { connectionName, dialect, connectionId } = await resolveConnectionInfo(context, sqlDoc);
 
-    await ensureMarkdownFile(mdUri, sqlUri, connectionName, dialect, sqlHash);
+    await ensureMarkdownFile(mdUri, sqlUri, connectionName, connectionId, dialect, sqlHash);
 
     if (MarkdownViewProvider.current) {
         await MarkdownViewProvider.current.showAndFocus(sqlUri);
@@ -143,35 +143,11 @@ function isSqlDoc(doc: vscode.TextDocument): boolean {
 }
 
 
-async function resolveConnectionInfo(
-    context: vscode.ExtensionContext,
-    doc: vscode.TextDocument
-): Promise<{ connectionId?: string; connectionName: string; dialect: string }> {
-    const docKey = doc.uri.toString();
-    const docConnections = context.workspaceState.get<Record<string, string>>("runql.docConnections.v1", {});
-    const docConnId = docConnections[docKey];
-    const activeId = context.workspaceState.get<string>("runql.activeConnectionId");
-    const connectionId = docConnId || activeId;
-
-    let connectionName = "none";
-    let dialect = "unknown";
-
-    if (connectionId) {
-        const profiles = await loadConnectionProfiles();
-        const profile = profiles.find(p => p.id === connectionId);
-        if (profile) {
-            connectionName = profile.name;
-            dialect = profile.dialect;
-        }
-    }
-
-    return { connectionId, connectionName, dialect };
-}
-
 async function ensureMarkdownFile(
     mdUri: vscode.Uri,
     sqlUri: vscode.Uri,
     connectionName: string,
+    connectionId: string | undefined,
     dialect: string,
     sqlHash: string
 ): Promise<void> {
@@ -185,6 +161,7 @@ async function ensureMarkdownFile(
         `title: "${prettyTitle}"`,
         `created_at: "${today}"`,
         `connection: "${connectionName}"`,
+        `connection_id: "${connectionId ?? ''}"`,
         `dialect: "${dialect}"`,
         "tags: []",
         `source_path: "${sourcePath}"`,
@@ -208,7 +185,22 @@ async function ensureMarkdownFile(
     }
 
     const existing = new TextDecoder().decode(await vscode.workspace.fs.readFile(mdUri));
-    if (existing.startsWith("---")) return;
+    if (existing.startsWith("---")) {
+        const lines = existing.split(/\r?\n/);
+        let endIndex = lines.findIndex((line, idx) => idx > 0 && line.trim() === "---");
+        if (endIndex === -1) {
+            return;
+        }
+
+        endIndex = upsertFrontmatterField(lines, endIndex, "connection", connectionName);
+        endIndex = upsertFrontmatterField(lines, endIndex, "connection_id", connectionId ?? "");
+        endIndex = upsertFrontmatterField(lines, endIndex, "dialect", dialect);
+        endIndex = upsertFrontmatterField(lines, endIndex, "source_path", sourcePath);
+        upsertFrontmatterField(lines, endIndex, "source_hash", sqlHash);
+
+        await vscode.workspace.fs.writeFile(mdUri, Buffer.from(lines.join("\n"), "utf8"));
+        return;
+    }
 
     const content = [
         header,
@@ -223,16 +215,16 @@ async function ensureMarkdownFile(
     await vscode.workspace.fs.writeFile(mdUri, Buffer.from(content, "utf8"));
 }
 
-function readFrontmatterValue(text: string, key: string): string | null {
-    const lines = text.split(/\r?\n/);
-    if (lines[0] !== "---") return null;
-    const endIndex = lines.findIndex((line, idx) => idx > 0 && line.trim() === "---");
-    if (endIndex === -1) return null;
+function upsertFrontmatterField(lines: string[], endIndex: number, key: string, value: string): number {
     for (let i = 1; i < endIndex; i += 1) {
-        const match = lines[i].match(new RegExp(`^${key}:\\s*\"?(.*?)\"?$`));
-        if (match) return match[1];
+        if (lines[i].startsWith(`${key}:`)) {
+            lines[i] = `${key}: "${value}"`;
+            return endIndex;
+        }
     }
-    return null;
+
+    lines.splice(endIndex, 0, `${key}: "${value}"`);
+    return endIndex + 1;
 }
 
 function replaceContentRegion(text: string, content: string): string {

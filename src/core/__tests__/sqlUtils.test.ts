@@ -78,6 +78,11 @@ describe('sqlUtils', () => {
       const result = resolveEffectiveSqlDialect(createProfile('mysql', 'mariadb'));
       expect(result).toBe('mysql');
     });
+
+    it('should prefer sqlDialect over connector dialects like secureql', () => {
+      const result = resolveEffectiveSqlDialect(createProfile('secureql' as any, 'postgresql'));
+      expect(result).toBe('postgres');
+    });
   });
 
   describe('quoteLiteral', () => {

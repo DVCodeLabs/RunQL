@@ -2,6 +2,7 @@
 import * as vscode from 'vscode';
 import { ensureDPDirs, readJson, writeJson } from '../core/fsWorkspace';
 import { DbDialect } from '../core/types';
+import { getDescriptionUriForConnection } from './schemaPaths';
 
 export interface DescriptionEntry {
     description: string;
@@ -24,18 +25,18 @@ export interface SchemaDescriptionsFile {
     columns: Record<string, DescriptionEntry>; // key: "schema.table.column"
 }
 
-export async function loadDescriptions(schemaFileBaseName: string): Promise<SchemaDescriptionsFile | null> {
+export async function loadDescriptions(connectionId: string, connectionName?: string): Promise<SchemaDescriptionsFile | null> {
     try {
         const dpDir = await ensureDPDirs();
-        const uri = vscode.Uri.joinPath(dpDir, 'schemas', `${schemaFileBaseName}.description.json`);
+        const uri = await getDescriptionUriForConnection(dpDir, connectionId, connectionName);
         return await readJson<SchemaDescriptionsFile>(uri);
     } catch (_e) {
         return null;
     }
 }
 
-export async function saveDescriptions(schemaFileBaseName: string, data: SchemaDescriptionsFile): Promise<void> {
+export async function saveDescriptions(connectionId: string, connectionName: string | undefined, data: SchemaDescriptionsFile): Promise<void> {
     const dpDir = await ensureDPDirs();
-    const uri = vscode.Uri.joinPath(dpDir, 'schemas', `${schemaFileBaseName}.description.json`);
+    const uri = await getDescriptionUriForConnection(dpDir, connectionId, connectionName);
     await writeJson(uri, data);
 }

@@ -111,8 +111,7 @@ export class ExplorerViewProvider implements vscode.TreeDataProvider<ExplorerIte
       const schemaName = element.schemaModel.name;
 
       if (element.folderKind === "tables") {
-        const safeName = getSafeName(introspection);
-        const descriptions = await loadDescriptions(safeName);
+        const descriptions = await loadDescriptions(introspection.connectionId, introspection.connectionName);
 
         // Look up the connection profile to check the allowCsvExport flag
         const profile = await getConnection(introspection.connectionId);
@@ -126,8 +125,7 @@ export class ExplorerViewProvider implements vscode.TreeDataProvider<ExplorerIte
       }
 
       if (element.folderKind === "views") {
-        const safeName = getSafeName(introspection);
-        const descriptions = await loadDescriptions(safeName);
+        const descriptions = await loadDescriptions(introspection.connectionId, introspection.connectionName);
 
         return (element.schemaModel.views || []).map(v => {
           const viewKey = `${schemaName}.${v.name}`;
@@ -178,8 +176,7 @@ export class ExplorerViewProvider implements vscode.TreeDataProvider<ExplorerIte
       const schemaName = element.schemaName || introspection.schemas[0].name;
 
       if (element.tableDetailKind === "columns") {
-        const safeName = getSafeName(introspection);
-        const descriptions = await loadDescriptions(safeName);
+        const descriptions = await loadDescriptions(introspection.connectionId, introspection.connectionName);
         const tableKey = `${schemaName}.${table.name}`;
         return table.columns.map(c => {
           const colKey = `${tableKey}.${c.name}`;

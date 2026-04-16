@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { loadDescriptions, saveDescriptions } from './descriptionStore';
 import { Logger } from '../core/logger';
+import { buildSchemaBundlePaths, listSchemaBundleDirs } from './schemaPaths';
+import { readJson } from '../core/fsWorkspace';
+import { SchemaIntrospection } from '../core/types';
 
 interface AIDescriptionResponse {
     schemaDescription?: string;
@@ -38,26 +41,27 @@ export async function importSchemaDescriptionResponses(_context: vscode.Extensio
     // 3. Pick target description file
     const { ensureDPDirs } = await import('../core/fsWorkspace');
     const dpDir = await ensureDPDirs();
-    const schemasDir = vscode.Uri.joinPath(dpDir, 'schemas');
-
-    let descFiles: vscode.Uri[] = [];
-    try {
-        const entries = await vscode.workspace.fs.readDirectory(schemasDir);
-        descFiles = entries
-            .filter(([name]) => name.endsWith('.description.json'))
-            .map(([name]) => vscode.Uri.joinPath(schemasDir, name));
-    } catch {
-        // schemas dir may not exist yet
-    }
-
-    if (descFiles.length === 0) {
+    const bundleDirs = await listSchemaBundleDirs(dpDir);
+    if (bundleDirs.length === 0) {
         vscode.window.showWarningMessage('No description files found. Generate descriptions first to create the target file.');
         return;
     }
 
-    const items = descFiles.map(uri => ({
-        label: uri.path.split('/').pop() || uri.fsPath,
-        uri
+    const items = await Promise.all(bundleDirs.map(async (bundleDir) => {
+        const paths = buildSchemaBundlePaths(bundleDir);
+        let schema: SchemaIntrospection | undefined;
+        try {
+            schema = await readJson<SchemaIntrospection>(paths.schema);
+        } catch {
+            schema = undefined;
+        }
+        return {
+            label: schema?.connectionName || (bundleDir.path.split('/').pop() || bundleDir.fsPath),
+            description: paths.description.path.split('/').pop() || paths.description.fsPath,
+            connectionId: schema?.connectionId,
+            connectionName: schema?.connectionName,
+            uri: paths.description
+        };
     }));
 
     const picked = items.length === 1
@@ -68,10 +72,11 @@ export async function importSchemaDescriptionResponses(_context: vscode.Extensio
 
     if (!picked) return;
 
-    const safeName = picked.label.replace('.description.json', '');
-    const existing = await loadDescriptions(safeName);
+    const existing = picked.connectionId
+        ? await loadDescriptions(picked.connectionId, picked.connectionName)
+        : null;
     if (!existing) {
-        vscode.window.showWarningMessage(`Could not load ${picked.label}.`);
+        vscode.window.showWarningMessage(`Could not load ${picked.description}.`);
         return;
     }
 
@@ -120,9 +125,9 @@ export async function importSchemaDescriptionResponses(_context: vscode.Extensio
     }
 
     existing.generatedAt = new Date().toISOString();
-    await saveDescriptions(safeName, existing);
+    await saveDescriptions(existing.connectionId, existing.connectionName, existing);
 
-    vscode.window.showInformationMessage(`Imported ${merged} description(s) into ${picked.label}.`);
+    vscode.window.showInformationMessage(`Imported ${merged} description(s) into ${picked.description}.`);
 
     // Open the file
     const doc = await vscode.workspace.openTextDocument(picked.uri);

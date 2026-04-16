@@ -5,6 +5,7 @@ import { loadPromptTemplate, renderPrompt } from '../ai/prompts';
 import { SchemaDescriptionsFile, loadDescriptions, saveDescriptions } from './descriptionStore';
 import { Logger } from '../core/logger';
 import { ErrorHandler, ErrorSeverity, formatSchemaError, formatAIError } from '../core/errorHandler';
+import { getDescriptionUriForConnection } from './schemaPaths';
 
 interface SchemaGeneratorItem {
     introspection?: SchemaIntrospection;
@@ -68,12 +69,8 @@ export async function generateDescriptionsWithAI(context: vscode.ExtensionContex
     // Wait, "For a selected schema... generate...". 
     // Use schemaFileBaseName.
 
-    const safeName = introspection.connectionName
-        ? introspection.connectionName.replace(/[^a-z0-9_\-\.]/gi, '_')
-        : introspection.connectionId;
-
     // Load existing
-    let existing = await loadDescriptions(safeName);
+    let existing = await loadDescriptions(introspection.connectionId, introspection.connectionName);
 
     if (!existing) {
         existing = {
@@ -204,13 +201,13 @@ export async function generateDescriptionsWithAI(context: vscode.ExtensionContex
         // Update timestamp
         existing!.generatedAt = new Date().toISOString();
 
-        await saveDescriptions(safeName, existing!);
+        await saveDescriptions(introspection.connectionId, introspection.connectionName, existing!);
 
         vscode.commands.executeCommand("runql.view.refreshSchemas"); // Refresh UI
 
         // Open the file for the user
         const dpDir = await import('../core/fsWorkspace').then(m => m.ensureDPDirs());
-        const uri = vscode.Uri.joinPath(dpDir, 'schemas', `${safeName}.description.json`);
+        const uri = await getDescriptionUriForConnection(dpDir, introspection.connectionId, introspection.connectionName);
         const doc = await vscode.workspace.openTextDocument(uri);
         await vscode.window.showTextDocument(doc);
     });

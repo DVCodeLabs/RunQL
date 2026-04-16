@@ -18,8 +18,8 @@ export function registerDPWatchers(
   subs.push(connWatcher.onDidCreate(onConnectionsChanged));
   subs.push(connWatcher.onDidDelete(onConnectionsChanged));
 
-  // schemas/*.json (exclude Meta/Relationships? v0: refresh all on any schema file change)
-  const schemaWatcher = vscode.workspace.createFileSystemWatcher("**/RunQL/schemas/*.json");
+  // schemas/**/**/*.json (schema bundles now live one directory below schemas/)
+  const schemaWatcher = vscode.workspace.createFileSystemWatcher("**/RunQL/schemas/**/*.json");
   subs.push(schemaWatcher);
   subs.push(schemaWatcher.onDidChange(onSchemasChanged));
   subs.push(schemaWatcher.onDidCreate(onSchemasChanged));

@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
-import { sanitizeFilename } from '../core/utils';
 import { CustomRelationshipsFile, CustomRelationship, ConnectionProfile, ConnectionSecrets, SchemaIntrospection } from '../core/types';
 import { readJson, writeJson } from '../core/fsWorkspace';
 import { Logger } from '../core/logger';
 import { ErrorHandler, ErrorSeverity, formatERDError } from '../core/errorHandler';
+import { resolveSchemaBundlePaths } from '../schema/schemaPaths';
 
 interface ERDLayoutSidecar {
     graphSignature: string;
@@ -116,29 +116,26 @@ export class ERDViewProvider implements vscode.WebviewViewProvider {
             const graphSignature = computeGraphSignature(data.nodes, data.edges);
             let layout: ERDLayoutSidecar | undefined = undefined;
 
-            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-            if (workspaceFolder) {
-                const dpDir = vscode.Uri.joinPath(workspaceFolder.uri, 'RunQL');
-                const safeName = sanitizeFilename(connectionProfile.name);
+            const { ensureDPDirs } = require('../core/fsWorkspace');
+            const dpDir = await ensureDPDirs();
+            const paths = await resolveSchemaBundlePaths(dpDir, connectionProfile.id, connectionProfile.name);
 
-                // Save ERD topology
-                const erdPath = vscode.Uri.joinPath(dpDir, 'system', 'erd', `${safeName}.erd.json`);
-                try {
-                    await vscode.workspace.fs.writeFile(erdPath, Buffer.from(JSON.stringify(data, null, 2)));
-                } catch (err) {
-                    Logger.error('Failed to save ERD JSON:', err);
-                }
+            // Save ERD topology
+            try {
+                await vscode.workspace.fs.createDirectory(paths.bundleDir);
+                await vscode.workspace.fs.writeFile(paths.erd, Buffer.from(JSON.stringify(data, null, 2)));
+            } catch (err) {
+                Logger.error('Failed to save ERD JSON:', err);
+            }
 
-                // Read layout sidecar
-                const layoutPath = vscode.Uri.joinPath(dpDir, 'system', 'erd', `${safeName}.layout.json`);
-                try {
-                    const saved = await readJson<ERDLayoutSidecar>(layoutPath);
-                    if (saved?.graphSignature === graphSignature && saved?.positions) {
-                        layout = saved;
-                    }
-                } catch {
-                    // No saved layout — webview will run ELK
+            // Read layout sidecar
+            try {
+                const saved = await readJson<ERDLayoutSidecar>(paths.layout);
+                if (saved?.graphSignature === graphSignature && saved?.positions) {
+                    layout = saved;
                 }
+            } catch {
+                // No saved layout — webview will run ELK
             }
 
             // 5. Send to Webview with layout data
@@ -196,9 +193,9 @@ export class ERDViewProvider implements vscode.WebviewViewProvider {
             let customRelUri: vscode.Uri;
             if (!schema.customRelationshipsPath) {
                 const dpDir = await ensureDPDirs();
-                const safeName = schema.connectionName?.replace(/[^a-z0-9_\-\.]/gi, '_') || schema.connectionId;
-                const filename = `${safeName}.custom.relationships.json`;
-                customRelUri = vscode.Uri.joinPath(dpDir, 'schemas', filename);
+                const paths = await resolveSchemaBundlePaths(dpDir, schema.connectionId, schema.connectionName);
+                await vscode.workspace.fs.createDirectory(paths.bundleDir);
+                customRelUri = paths.customRelationships;
 
                 // Create new file
                 const newFile: CustomRelationshipsFile = {
@@ -329,11 +326,10 @@ export class ERDViewProvider implements vscode.WebviewViewProvider {
         positions: Record<string, { x: number; y: number }>;
     }) {
         try {
-            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-            if (!workspaceFolder) return;
-            const dpDir = vscode.Uri.joinPath(workspaceFolder.uri, 'RunQL');
-            const safeName = sanitizeFilename(data.connectionName);
-            const layoutPath = vscode.Uri.joinPath(dpDir, 'system', 'erd', `${safeName}.layout.json`);
+            const { ensureDPDirs } = require('../core/fsWorkspace');
+            const dpDir = await ensureDPDirs();
+            if (!this._currentConnectionId) return;
+            const paths = await resolveSchemaBundlePaths(dpDir, this._currentConnectionId, data.connectionName);
 
             const sidecar = {
                 version: "0.1",
@@ -343,7 +339,8 @@ export class ERDViewProvider implements vscode.WebviewViewProvider {
                 positions: data.positions,
                 updatedAt: new Date().toISOString()
             };
-            await writeJson(layoutPath, sidecar);
+            await vscode.workspace.fs.createDirectory(paths.bundleDir);
+            await writeJson(paths.layout, sidecar);
         } catch (err) {
             Logger.error('Failed to save ERD layout:', err);
         }

@@ -18,7 +18,7 @@ export async function ensureDPDirs(): Promise<vscode.Uri> {
   }
 
   // Create subdirs (ignore if already exist)
-  const subs = ['schemas', 'queries', 'system', 'system/erd', 'system/prompts'];
+  const subs = ['schemas', 'queries', 'system', 'system/migrations', 'system/migration_backup', 'system/prompts'];
   for (const s of subs) {
     try {
       await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(dpDir, s));
@@ -101,7 +101,7 @@ This repo stores SQL, schemas, and ERD metadata in known locations. When a user 
 - Existing queries: \`RunQL/queries/\` (may include subdirectories).
 - Query index: \`RunQL/system/queryIndex.json\` (this is auto updated when a query is saved)
 - Schemas and descriptions: \`RunQL/schemas/\` (these are auto create when a connection is added)
-- ERD files: \`RunQL/system/erd/\` (these get auto created when a user clicks view ERD)
+- Schema and ERD bundles: \`RunQL/schemas/<connection>/\` (these get auto created when a user introspects or opens an ERD)
 
 ## Required Workflow (SQL Queries)
 
@@ -109,7 +109,7 @@ This repo stores SQL, schemas, and ERD metadata in known locations. When a user 
    - Check \`RunQL/queries/\` (including subdirectories) and \`RunQL/system/queryIndex.json\`.
 2. If nothing relevant exists, read the schema and docs.
    - Use \`RunQL/schemas/\` for table/column definitions, relationships (if available), and descriptions.
-   - Use \`RunQL/system/erd/\` if populated, to understand joins and relationships.
+   - Use \`RunQL/schemas/<connection>/erd.json\` and \`erd.layout.json\` if populated, to understand joins and relationships.
 3. Only then should you create a new SQL query file (.sql)
    - Prefer to reuse or extend existing patterns when possible.
    - Do NOT create any other RunQL files when creating sql - only create .sql files
@@ -122,8 +122,8 @@ This repo stores SQL, schemas, and ERD metadata in known locations. When a user 
    - Example: \`olympic_gold.sql\` -> \`olympic_gold.md\`.
 2. Schema Description:
    - If a user asks you to describe a schema, follow the prompt in \`RunQL/system/prompts/describeSchema.txt\`.
-   - Output the results to \`RunQL/schemas/\` with the same name as the connection but a different extension.
-   - Example: \`olympics_db.json\` -> \`olympics_db.description.json\`.
+   - Output the results to the matching schema bundle folder inside \`RunQL/schemas/\`.
+   - Example: \`RunQL/schemas/olympics_db/description.json\`.
 3. Inline Comments:
    - If a user asks you to create inline comments on an SQL file, follow the prompt in \`RunQL/system/prompts/inlineComments.txt\`.
 
@@ -165,8 +165,8 @@ This project uses RunQL for SQL workflows and schema exploration.
 ## Folder Structure
 
 - **RunQL/queries/**: Saved SQL queries.
-- **RunQL/schemas/**: Schema definitions and descriptions.
-- **RunQL/system/**: generated indexes, ERD data, and prompts (optional to commit).
+- **RunQL/schemas/**: Per-connection schema bundles including descriptions and ERD files.
+- **RunQL/system/**: generated indexes, migration backups, and prompts (optional to commit).
 `;
 
   const bytes = new TextEncoder().encode(content);

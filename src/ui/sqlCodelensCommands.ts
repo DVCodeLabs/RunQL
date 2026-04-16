@@ -2,8 +2,9 @@ import * as vscode from "vscode";
 import { DPDocConnectionStore } from "./sqlCodelens";
 import { loadConnectionProfiles } from "../connections/connectionStore";
 import { queryIndex } from "../queryLibrary/queryIndex";
+import { resolveEffectiveSqlDialect } from "../core/sqlUtils";
 
-async function updateQueryMdConnection(docUri: vscode.Uri, connectionName: string, dialect?: string) {
+async function updateQueryMdConnection(docUri: vscode.Uri, connectionName: string, connectionId?: string, dialect?: string) {
     if (!docUri.fsPath.endsWith(".sql")) return;
     const mdPath = docUri.fsPath.replace(/\.sql$/i, ".md");
     const mdUri = vscode.Uri.file(mdPath);
@@ -23,11 +24,16 @@ async function updateQueryMdConnection(docUri: vscode.Uri, connectionName: strin
     if (endIndex === -1) return;
 
     let connectionReplaced = false;
+    let connectionIdReplaced = false;
     let dialectReplaced = false;
     for (let i = 1; i < endIndex; i += 1) {
         if (lines[i].startsWith("connection:")) {
             lines[i] = `connection: "${connectionName}"`;
             connectionReplaced = true;
+        }
+        if (typeof connectionId === "string" && lines[i].startsWith("connection_id:")) {
+            lines[i] = `connection_id: "${connectionId}"`;
+            connectionIdReplaced = true;
         }
         if (dialect && lines[i].startsWith("dialect:")) {
             lines[i] = `dialect: "${dialect}"`;
@@ -35,11 +41,17 @@ async function updateQueryMdConnection(docUri: vscode.Uri, connectionName: strin
         }
     }
 
+    let insertIndex = endIndex;
     if (!connectionReplaced) {
-        lines.splice(endIndex, 0, `connection: "${connectionName}"`);
+        lines.splice(insertIndex, 0, `connection: "${connectionName}"`);
+        insertIndex += 1;
+    }
+    if (typeof connectionId === "string" && !connectionIdReplaced) {
+        lines.splice(insertIndex, 0, `connection_id: "${connectionId}"`);
+        insertIndex += 1;
     }
     if (dialect && !dialectReplaced) {
-        lines.splice(endIndex, 0, `dialect: "${dialect}"`);
+        lines.splice(insertIndex, 0, `dialect: "${dialect}"`);
     }
 
     const updated = lines.join("\n");
@@ -68,9 +80,11 @@ export function registerSqlCodelensCommands(
                 const profiles = await loadConnectionProfiles();
                 const profile = profiles.find(p => p.id === connectionId);
                 if (profile) {
+                    const effectiveDialect = resolveEffectiveSqlDialect(profile);
                     await store.set(doc, connectionId);
                     // Update Index
-                    await queryIndex.updateConnectionContext(doc.uri, profile.id, profile.name, profile.dialect);
+                    await queryIndex.updateConnectionContext(doc.uri, profile.id, profile.name, effectiveDialect);
+                    await updateQueryMdConnection(doc.uri, profile.name, profile.id, effectiveDialect);
 
                     providerRefresh();
                     onConnectionChanged?.();
@@ -99,11 +113,12 @@ export function registerSqlCodelensCommands(
 
             if (!picked) return;
 
+            const effectiveDialect = picked.profile ? resolveEffectiveSqlDialect(picked.profile) : 'duckdb';
             await store.set(doc, picked.id);
-            await updateQueryMdConnection(doc.uri, picked.label, picked.profile?.dialect);
+            await updateQueryMdConnection(doc.uri, picked.label, picked.id, effectiveDialect);
 
             // Update Index (Source of Truth)
-            await queryIndex.updateConnectionContext(doc.uri, picked.id, picked.label, picked.profile?.dialect || 'duckdb');
+            await queryIndex.updateConnectionContext(doc.uri, picked.id, picked.label, effectiveDialect);
 
             // Also update running context if this is the active document
             if (vscode.window.activeTextEditor?.document.uri.toString() === doc.uri.toString()) {

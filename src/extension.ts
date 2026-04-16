@@ -707,7 +707,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       // Persist to queryIndex for active editor
       const editor = vscode.window.activeTextEditor;
       if (editor && isSqlDoc(editor.document)) {
-        await queryIndex.updateConnectionContext(editor.document.uri, profile.id, profile.name, profile.dialect);
+        await queryIndex.updateConnectionContext(editor.document.uri, profile.id, profile.name, resolveEffectiveSqlDialect(profile));
       }
 
       void refreshProductionWarningBar();
@@ -1974,16 +1974,20 @@ async function initializeProjectComponents(context: vscode.ExtensionContext) {
     const { initializePromptFiles } = require('./ai/prompts');
     const { ensureReadmeMd } = require('./core/fsWorkspace');
     const { HistoryService } = require('./services/historyService');
+    const { runSchemaBundleMigrationIfNeeded } = require('./schema/storageMigration');
 
-    // 1. Query Index
+    // 1. Schema storage migration
+    await runSchemaBundleMigrationIfNeeded();
+
+    // 2. Query Index
     await queryIndex.initialize();
 
-    // 2. Prompt Files
+    // 3. Prompt Files
     await initializePromptFiles();
 
-    // 3. Documentation
+    // 4. Documentation
     await ensureReadmeMd();
-    // 4. History Service
+    // 5. History Service
     await HistoryService.getInstance().initialize(context);
 
   } catch (err) {

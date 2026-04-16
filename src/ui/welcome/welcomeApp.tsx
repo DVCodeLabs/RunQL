@@ -29,10 +29,10 @@ const INIT_STRUCTURE: InitStructureEntry[] = [
     { folder: '(project root)', files: ['AGENTS.md (or AGENTS_RUNQL.md)', 'README_RUNQL.md'] },
     { folder: 'RunQL', files: [] },
     { folder: 'RunQL/queries', files: [] },
-    { folder: 'RunQL/schemas', files: [] },
+    { folder: 'RunQL/schemas', files: ['<connection>/schema.json', '<connection>/description.json', '<connection>/custom.relationships.json', '<connection>/erd.json', '<connection>/erd.layout.json'] },
     { folder: 'RunQL/system', files: [] },
     { folder: 'RunQL/system/queries', files: ['queryIndex.json', 'queryHistory.json (after first query run)'] },
-    { folder: 'RunQL/system/erd', files: [] },
+    { folder: 'RunQL/system/migration_backup', files: ['manifest.json (only after a storage migration)'] },
     {
         folder: 'RunQL/system/prompts',
         files: ['markdownDoc.txt', 'inlineComments.txt', 'describeSchema.txt']

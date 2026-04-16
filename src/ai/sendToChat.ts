@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import { loadConnectionProfiles } from '../connections/connectionStore';
 import { buildSchemaContext } from './schemaContext';
 import { loadPromptTemplate, renderPrompt } from './prompts';
+import { resolveConnectionInfo } from './connectionInfo';
 
 // ---------------------------------------------------------------------------
 // Core helper – copies prompt to clipboard and notifies the user
@@ -10,35 +10,6 @@ import { loadPromptTemplate, renderPrompt } from './prompts';
 async function sendPromptToChat(prompt: string): Promise<void> {
     await vscode.env.clipboard.writeText(prompt);
     vscode.window.showInformationMessage('Prompt copied to clipboard. Paste into your AI chat tool.');
-}
-
-// ---------------------------------------------------------------------------
-// Connection helper (shared across SQL-oriented tasks)
-// ---------------------------------------------------------------------------
-
-async function resolveConnectionInfo(
-    context: vscode.ExtensionContext,
-    doc: vscode.TextDocument
-): Promise<{ connectionId?: string; connectionName: string; dialect: string }> {
-    const docKey = doc.uri.toString();
-    const docConnections = context.workspaceState.get<Record<string, string>>('runql.docConnections.v1', {});
-    const docConnId = docConnections[docKey];
-    const activeId = context.workspaceState.get<string>('runql.activeConnectionId');
-    const connectionId = docConnId || activeId;
-
-    let connectionName = 'none';
-    let dialect = 'unknown';
-
-    if (connectionId) {
-        const profiles = await loadConnectionProfiles();
-        const profile = profiles.find(p => p.id === connectionId);
-        if (profile) {
-            connectionName = profile.name;
-            dialect = profile.dialect;
-        }
-    }
-
-    return { connectionId, connectionName, dialect };
 }
 
 // ---------------------------------------------------------------------------

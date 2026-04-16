@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { loadConnectionProfiles } from '../connections/connectionStore';
 import { canonicalizeSql } from '../core/hashing';
 import { ErrorHandler, ErrorSeverity, formatFileSystemError } from '../core/errorHandler';
+import { resolveEffectiveSqlDialect } from '../core/sqlUtils';
 
 export async function createSqlFile(context: vscode.ExtensionContext) {
     // 1. Get Workspace Folder
@@ -75,7 +76,7 @@ export async function createSqlFile(context: vscode.ExtensionContext) {
         if (profile) {
             connName = profile.name;
             connId = profile.id;
-            dialect = profile.dialect;
+            dialect = resolveEffectiveSqlDialect(profile);
         }
     }
 
