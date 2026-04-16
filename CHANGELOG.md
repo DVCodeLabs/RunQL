@@ -84,3 +84,21 @@ Redesign AI settings, add What's New guidance, and normalize AI settings across 
 
 ### Added
 - Remove duckdb from the core client and prep to release duckdb support as its own extension adapter.
+
+## [1.6.0] - 2026-04-16
+
+### Added
+1. Use effective SQL dialect for SecureQL AI prompts and query metadata
+- Centralize AI connection dialect resolution on resolveEffectiveSqlDialect() so SecureQL-backed prompts receive the underlying database dialect rather than the connector name.
+- Update query markdown/frontmatter and per-document query index context to persist the effective SQL dialect consistently, while leaving adapter routing on the raw connector dialect.
+
+2. Move ERD artifacts into per-connection schema bundles and stop using RunQL/system/erd at runtime.
+
+Add a one-time startup migration that:
+- migrates legacy flat schema files into bundle folders
+- moves legacy files into RunQL/system/migration_backup
+- records migration state and manifest
+- removes the empty legacy system/erd directory
+- normalizes bundle layout sidecars to erd.layout.json
+
+Also update watchers, docs, and tests for the new storage layout.
