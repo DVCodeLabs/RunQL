@@ -24,9 +24,13 @@ This guide describes how to operate RunQL safely in local-first and team environ
 
 Review these paths before pushing:
 
-- `RunQL/schemas/`
-- `RunQL/system/erd/`
+- `RunQL/schemas/<connection>/schema.json`
+- `RunQL/schemas/<connection>/description.json`
+- `RunQL/schemas/<connection>/custom.relationships.json`
+- `RunQL/schemas/<connection>/erd.json`
+- `RunQL/schemas/<connection>/erd.layout.json`
 - `RunQL/system/prompts/`
+- `RunQL/system/migration_backup/`
 - Query Markdown docs
 
 These files are intended to be reviewable artifacts, but should still be checked for sensitive data.

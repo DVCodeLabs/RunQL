@@ -12,6 +12,13 @@ import { DbAdapter } from "./adapter";
 import { Client } from "pg";
 import { convertBigIntForSerialization } from "./serializationUtils";
 import { openSshTunnel } from "./sshTunnel";
+import { isDbAdminConnection } from "../connectionType";
+
+const PG_SYSTEM_SCHEMAS = ['information_schema', 'pg_catalog'];
+
+function schemaListSql(schemas: string[]): string {
+  return schemas.map((s) => `'${s}'`).join(', ');
+}
 
 export class PostgresAdapter implements DbAdapter {
   readonly dialect: DbDialect = "postgres";
@@ -110,21 +117,24 @@ export class PostgresAdapter implements DbAdapter {
     const { client, cleanup } = await this.createConnectedClient(profile, secrets);
     try {
       await client.connect();
+      const schemaPredicate = isDbAdminConnection(profile)
+        ? `IN (${schemaListSql(PG_SYSTEM_SCHEMAS)})`
+        : `NOT IN (${schemaListSql(PG_SYSTEM_SCHEMAS)})`;
 
       // Query information_schema
       const res = await client.query(`
-             SELECT table_schema, table_name, column_name, data_type, is_nullable
-             FROM information_schema.columns
-             WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
-             ORDER BY table_schema, table_name, ordinal_position
-         `);
+	             SELECT table_schema, table_name, column_name, data_type, is_nullable
+	             FROM information_schema.columns
+	             WHERE table_schema ${schemaPredicate}
+	             ORDER BY table_schema, table_name, ordinal_position
+	         `);
 
       // Query table types to distinguish tables from views
       const tableTypesRes = await client.query(`
-             SELECT table_schema, table_name, table_type
-             FROM information_schema.tables
-             WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
-      `);
+	             SELECT table_schema, table_name, table_type
+	             FROM information_schema.tables
+	             WHERE table_schema ${schemaPredicate}
+	      `);
 
       const tableTypeMap = new Map<string, string>();
       for (const row of tableTypesRes.rows) {
@@ -193,9 +203,9 @@ export class PostgresAdapter implements DbAdapter {
                    AND rc.unique_constraint_schema = cc.constraint_schema
                    AND kcu.ordinal_position = cc.ordinal_position
              WHERE 
-                 tc.constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY')
-                 AND tc.table_schema NOT IN ('information_schema', 'pg_catalog')
-      `);
+	                 tc.constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY')
+	                 AND tc.table_schema ${schemaPredicate}
+	      `);
 
       for (const row of constraintsRes.rows) {
         const sName = row.table_schema;
@@ -227,11 +237,11 @@ export class PostgresAdapter implements DbAdapter {
                  schemaname AS table_schema,
                  tablename AS table_name,
                  indexname AS index_name,
-                 indexdef
-             FROM pg_indexes
-             WHERE schemaname NOT IN ('information_schema', 'pg_catalog')
-             ORDER BY schemaname, tablename, indexname
-      `);
+	                 indexdef
+	             FROM pg_indexes
+	             WHERE schemaname ${schemaPredicate}
+	             ORDER BY schemaname, tablename, indexname
+	      `);
 
       for (const row of indexRes.rows) {
         const schema = schemasMap.get(row.table_schema);
@@ -263,11 +273,11 @@ export class PostgresAdapter implements DbAdapter {
                  l.lanname AS language_name,
                  obj_description(p.oid, 'pg_proc') AS routine_comment
              FROM pg_proc p
-             JOIN pg_namespace n ON n.oid = p.pronamespace
-             LEFT JOIN pg_language l ON l.oid = p.prolang
-             WHERE n.nspname NOT IN ('information_schema', 'pg_catalog')
-             ORDER BY n.nspname, p.proname
-      `);
+	             JOIN pg_namespace n ON n.oid = p.pronamespace
+	             LEFT JOIN pg_language l ON l.oid = p.prolang
+	             WHERE n.nspname ${schemaPredicate}
+	             ORDER BY n.nspname, p.proname
+	      `);
 
       for (const row of routinesRes.rows) {
         const schemaName = row.schema_name;

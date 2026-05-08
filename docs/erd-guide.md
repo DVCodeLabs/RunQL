@@ -5,7 +5,6 @@ RunQL can generate ERDs from introspected schemas and save artifacts in your wor
 ## Commands
 
 - `RunQL: View ERD (Active Connection)`
-- `RunQL: View ERD (Data Work DB)`
 - `RunQL: View ERD (Selected Schema)`
 
 ## Prerequisites
@@ -18,7 +17,14 @@ RunQL can generate ERDs from introspected schemas and save artifacts in your wor
 
 ERD files are persisted in:
 
-- `RunQL/system/erd/<connection-name>.erd.json`
+- `RunQL/schemas/<connection>/erd.json`
+- `RunQL/schemas/<connection>/erd.layout.json`
+
+The same bundle also contains schema-sidecar files such as:
+
+- `RunQL/schemas/<connection>/schema.json`
+- `RunQL/schemas/<connection>/description.json`
+- `RunQL/schemas/<connection>/custom.relationships.json`
 
 These files are useful for:
 
@@ -31,4 +37,4 @@ These files are useful for:
 - Empty ERD: refresh introspection first
 - Missing tables: check schema filters/system-schema visibility
 - Stale graph: rerun introspection and regenerate ERD
-
+- Missing legacy ERD file: check the matching schema bundle; old `RunQL/system/erd/` files are migrated into bundles and backed up under `RunQL/system/migration_backup/`

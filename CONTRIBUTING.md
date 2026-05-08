@@ -183,6 +183,20 @@ RunQL/
 - **Repository Pattern**: Data access is abstracted through repositories
 - **Error Handling**: Centralized error handling with user-friendly messages
 
+### Database Provider Extensions
+
+Connector extensions register their database UI and runtime adapter through the RunQL extension API. Providers that need a standard Data Access / DB Admin selector can opt in with:
+
+```ts
+supports: {
+  dbAdminConnectionType: true
+}
+```
+
+RunQL then adds or preserves the `connectionType` profile field using the values `data_access` and `db_admin`. It also hides the standard `database` and `schema` fields in DB Admin mode unless the provider defines its own visibility rules. The adapter must still implement the database-specific behavior by checking `profile.connectionType === 'db_admin'` during connection setup, query execution, and schema introspection.
+
+Do not enable `dbAdminConnectionType` only to show the UI. Enable it when the adapter has a defined admin-mode target and introspection contract. For example, a future MS SQL Server connector can use DB Admin mode to connect without a user-selected database and introspect catalog views plus `INFORMATION_SCHEMA`. The current Snowflake and DuckDB connectors can remain data-access-only until their maintainers define a real admin-mode workflow.
+
 ## Testing Strategy
 
 ### Unit Tests

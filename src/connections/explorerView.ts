@@ -5,6 +5,7 @@ import { loadSchemas } from "../schema/schemaStore";
 import { loadDescriptions } from "../schema/descriptionStore";
 import { isProjectInitialized } from "../core/isProjectInitialized";
 import { quoteIdentifier } from "../core/sqlUtils";
+import { isDbAdminConnection } from "./connectionType";
 
 type ExplorerFolderKind = "tables" | "views" | "procedures" | "functions";
 type TableDetailFolderKind = "columns" | "keys" | "foreignKeys" | "indexes";
@@ -75,10 +76,11 @@ export class ExplorerViewProvider implements vscode.TreeDataProvider<ExplorerIte
       if (schemas.length === 0) return [];
 
       const showInternal = this.context.workspaceState.get<boolean>('runql.ui.showSystemSchemas', false);
+      const showAdminSchemas = isDbAdminConnection(element.profile);
       const INTERNAL_SCHEMAS = ['dp_app', 'information_schema', 'pg_catalog'];
 
       return schemas
-        .filter(s => showInternal || !INTERNAL_SCHEMAS.includes(s.name))
+        .filter(s => showInternal || showAdminSchemas || !INTERNAL_SCHEMAS.includes(s.name))
         .map(s => ExplorerItem.fromSchemaModel(s, intro, this.context.extensionUri, element.profile!.allowCsvExport ?? true));
     }
 

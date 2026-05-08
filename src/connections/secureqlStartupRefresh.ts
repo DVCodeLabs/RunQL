@@ -1,6 +1,7 @@
 import { ConnectionProfile, ConnectionSecrets } from '../core/types';
 import { getKeyInfo } from './adapters/secureqlClient';
 import { Logger } from '../core/logger';
+import { normalizeConnectionType, normalizeProfileConnectionType } from './connectionType';
 
 /**
  * At startup, iterate all SecureQL-dialect connections and refresh
@@ -24,9 +25,15 @@ export async function refreshAllSecureQLProfiles(
             if (!baseUrl || !apiKey) continue;
 
             const info = await getKeyInfo(baseUrl, apiKey);
+            const connectionType = normalizeConnectionType(info.connection_type);
 
             // Update server-controlled fields
             let changed = false;
+            const existingConnectionType = profile.connectionType;
+            normalizeProfileConnectionType(profile);
+            if (profile.connectionType !== existingConnectionType) {
+                changed = true;
+            }
             if (profile.allowCsvExport !== info.allow_csv_export) {
                 profile.allowCsvExport = info.allow_csv_export;
                 changed = true;
@@ -35,12 +42,16 @@ export async function refreshAllSecureQLProfiles(
                 profile.secureqlConnectionId = String(info.connection_id);
                 changed = true;
             }
-            if (!profile.secureqlTargetDbms) {
+            if (profile.secureqlTargetDbms !== info.dbms) {
                 profile.secureqlTargetDbms = info.dbms;
                 changed = true;
             }
-            if (!profile.sqlDialect) {
+            if (profile.sqlDialect !== info.dbms) {
                 profile.sqlDialect = info.dbms;
+                changed = true;
+            }
+            if (profile.connectionType !== connectionType) {
+                profile.connectionType = connectionType;
                 changed = true;
             }
 

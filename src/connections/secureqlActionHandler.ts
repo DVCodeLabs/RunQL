@@ -1,5 +1,6 @@
 import { DPProviderActionHandler, DPProviderActionResult } from '../core/types';
 import { getKeyInfo, SecureQLApiError } from './adapters/secureqlClient';
+import { formatConnectionTypeLabel, normalizeConnectionType } from './connectionType';
 
 /**
  * Built-in action handler for the SecureQL "Validate API Key" button.
@@ -22,16 +23,21 @@ export const secureqlActionHandler: DPProviderActionHandler = async (
 
     try {
         const info = await getKeyInfo(baseUrl, apiKey);
+        const connectionType = normalizeConnectionType(info.connection_type);
+        const connectionDetail = connectionType === 'db_admin'
+            ? 'DB Admin'
+            : `${formatConnectionTypeLabel(connectionType)}, database: ${info.database_name ?? '(none)'}`;
         return {
             profilePatch: {
                 secureqlConnectionId: String(info.connection_id),
                 secureqlTargetDbms: info.dbms,
                 sqlDialect: info.dbms,
+                connectionType,
                 allowCsvExport: info.allow_csv_export,
             },
             status: {
                 type: 'success' as const,
-                text: `Validated! Connection: "${info.connection_name}" (${info.dbms}, database: ${info.database_name})`,
+                text: `Validated! Connection: "${info.connection_name}" (${info.dbms}, ${connectionDetail})`,
             },
         };
     } catch (err: any) {

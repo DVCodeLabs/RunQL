@@ -1,6 +1,7 @@
 import * as https from 'https';
 import * as http from 'http';
 import { randomUUID } from 'crypto';
+import { ConnectionType } from '../../core/types';
 
 export interface SecureQLRequestOptions {
     baseUrl: string;
@@ -301,9 +302,11 @@ export interface KeyInfo {
     connection_id: number;
     connection_name: string;
     dbms: string;
-    database_name: string;
+    database_name: string | null;
+    connection_type?: ConnectionType;
     allow_csv_export: boolean;
-    user_id: number;
+    connection_account_id?: number;
+    user_id?: number;
 }
 
 /**

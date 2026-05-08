@@ -13,6 +13,8 @@ export type DbDialect =
     | "oracle"
     | (string & {});
 
+export type ConnectionType = 'data_access' | 'db_admin';
+
 export interface DPProviderDescriptor {
     providerId: string;
     displayName: string;
@@ -25,6 +27,12 @@ export interface DPProviderDescriptor {
         keypair: boolean;
         introspection: boolean;
         cancellation: boolean;
+        /**
+         * Enables the standard Data Access / DB Admin connection type UI for
+         * non-SecureQL providers. Adapters remain responsible for honoring
+         * profile.connectionType during connection setup and introspection.
+         */
+        dbAdminConnectionType?: boolean;
     };
 }
 
@@ -34,6 +42,7 @@ export type DPConnectionFieldStorage = 'profile' | 'secrets' | 'local';
 export interface DPConnectionFormOption {
     value: string;
     label: string;
+    description?: string;
 }
 
 export interface DPConnectionFieldVisibility {
@@ -135,6 +144,7 @@ export interface ConnectionProfile {
     // Optional SQL dialect hint — used when `dialect` is a connector (e.g. "secureql")
     // but the actual target DB is a standard DBMS (e.g. "postgres", "mysql", "mariadb").
     sqlDialect?: DbDialect;
+    connectionType?: ConnectionType;
 
     // For file-based DBs
     filePath?: string;          // sqlite/duckdb

@@ -9,32 +9,32 @@ This is the primary setting. It answers: "How should RunQL access AI?"
 
 Choose one of these:
 
-- `GitHub Copilot / VS Code AI`: use the AI already available in VS Code, typically GitHub Copilot.
-- `AI Extension`: send supported AI tasks to another installed extension such as Claude Code or Codex.
-- `Direct API`: call your own provider or local model server.
-- `Automatic`: let RunQL choose the best available option for the current editor.
-- `Off`: disable AI features and use Copy Prompt instead.
+- `githubCopilot` (`GitHub Copilot / VS Code AI`): use the AI already available in VS Code, typically GitHub Copilot.
+- `aiExtension` (`AI Extension`): send supported AI tasks to another installed extension such as Claude Code or Codex.
+- `directApi` (`Direct API`): call your own provider or local model server.
+- `automatic` (`Automatic`): let RunQL choose the best available option for the current editor.
+- `off` (`Off`): disable AI features and use Copy Prompt instead.
 
 ### `runql.ai.extension`
-This only matters when `runql.ai.source = AI Extension`.
+This only matters when `runql.ai.source = aiExtension`.
 
 Use it to choose:
 
-- `Claude Code`
-- `Codex`
+- `claudeExtension` (`Claude Code`)
+- `codexExtension` (`Codex`)
 
 If left on automatic, RunQL will choose from supported installed extensions.
 
 ### `runql.ai.apiProvider`
-This only matters when `runql.ai.source = Direct API`.
+This only matters when `runql.ai.source = directApi`.
 
 Choose one of these:
 
-- `OpenAI`
-- `Anthropic`
-- `Azure OpenAI`
-- `Ollama`
-- `OpenAI-Compatible`
+- `openai` (`OpenAI`)
+- `anthropic` (`Anthropic`)
+- `azureOpenAI` (`Azure OpenAI`)
+- `ollama` (`Ollama`)
+- `openaiCompatible` (`OpenAI-Compatible`)
 
 ### `runql.ai.model`
 This is used when the selected AI source supports model selection.
@@ -77,7 +77,7 @@ Not used for:
 
 Set:
 
-- `runql.ai.source = GitHub Copilot / VS Code AI`
+- `runql.ai.source = githubCopilot`
 
 You usually do not need `runql.ai.apiBaseUrl`.
 
@@ -85,7 +85,7 @@ You usually do not need `runql.ai.apiBaseUrl`.
 
 Set:
 
-- `runql.ai.source = AI Extension`
+- `runql.ai.source = aiExtension`
 - `runql.ai.extension` if you want to force Claude Code or Codex instead of automatic selection
 
 This path is best for supported edit and generation tasks that RunQL can hand off directly to another extension.
@@ -94,7 +94,7 @@ This path is best for supported edit and generation tasks that RunQL can hand of
 
 Set:
 
-- `runql.ai.source = Direct API`
+- `runql.ai.source = directApi`
 - `runql.ai.apiProvider`
 - `runql.ai.model`
 - API key in secret storage
@@ -105,8 +105,8 @@ Also set `runql.ai.apiBaseUrl` for Azure OpenAI.
 
 Set:
 
-- `runql.ai.source = Direct API`
-- `runql.ai.apiProvider = Ollama`
+- `runql.ai.source = directApi`
+- `runql.ai.apiProvider = ollama`
 
 Optionally set:
 
@@ -117,8 +117,8 @@ Optionally set:
 
 Set:
 
-- `runql.ai.source = Direct API`
-- `runql.ai.apiProvider = OpenAI-Compatible`
+- `runql.ai.source = directApi`
+- `runql.ai.apiProvider = openaiCompatible`
 - `runql.ai.model`
 - `runql.ai.apiBaseUrl`
 

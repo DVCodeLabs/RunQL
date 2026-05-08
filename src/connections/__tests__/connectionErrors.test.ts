@@ -58,6 +58,31 @@ describe('connectionErrors', () => {
       expect(result).toContain('permissions');
     });
 
+    it('should explain MySQL access denied client host context', () => {
+      const error = {
+        code: 'ER_ACCESS_DENIED_ERROR',
+        errno: 1045,
+        message: "Access denied for user 'loguser'@'172.20.0.1' (using password: YES)"
+      };
+      const result = mapDatabaseError(error);
+
+      expect(result).toContain('Authentication failed');
+      expect(result).toContain('172.20.0.1');
+      expect(result).toContain('client address as seen by the server');
+      expect(result).toContain('not the configured host');
+    });
+
+    it('should explain MySQL access denied errors by errno', () => {
+      const error = {
+        errno: 1045,
+        message: "Access denied for user 'loguser'@'172.20.0.1' (using password: YES)"
+      };
+      const result = mapDatabaseError(error);
+
+      expect(result).toContain('Authentication failed');
+      expect(result).toContain('172.20.0.1');
+    });
+
     it('should map PostgreSQL invalid database error (3D000)', () => {
       const error = { code: '3D000', message: 'database does not exist' };
       const result = mapDatabaseError(error);

@@ -329,6 +329,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ vscode }) => {
 
         const value = getFieldValue(field);
         const fieldClass = `cf-field${field.width === 'half' ? ' half' : ''}`;
+        const isConnectionTypeField = field.key === 'connectionType';
 
         let control: React.ReactNode;
         switch (field.type) {
@@ -389,20 +390,47 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ vscode }) => {
                 );
                 break;
             case 'radio':
-                control = (
-                    <div className="cf-radio-group">
-                        {(field.options ?? []).map((option) => (
-                            <label key={option.value} className="cf-radio-label">
-                                <input
-                                    type="radio"
-                                    checked={String(value ?? '') === option.value}
-                                    onChange={() => setFieldValue(field, option.value)}
-                                />
-                                <span>{option.label}</span>
-                            </label>
-                        ))}
-                    </div>
-                );
+                if (isConnectionTypeField) {
+                    control = (
+                        <div className="cf-connection-type-group">
+                            {(field.options ?? []).map((option) => {
+                                const checked = String(value ?? '') === option.value;
+                                return (
+                                    <label
+                                        key={option.value}
+                                        className={`cf-connection-type-card${checked ? ' selected' : ''}`}
+                                    >
+                                        <input
+                                            type="radio"
+                                            name={field.key}
+                                            checked={checked}
+                                            onChange={() => setFieldValue(field, option.value)}
+                                        />
+                                        <span className="cf-connection-type-title">{option.label}</span>
+                                        {option.description && (
+                                            <span className="cf-connection-type-copy">{option.description}</span>
+                                        )}
+                                    </label>
+                                );
+                            })}
+                        </div>
+                    );
+                } else {
+                    control = (
+                        <div className="cf-radio-group">
+                            {(field.options ?? []).map((option) => (
+                                <label key={option.value} className="cf-radio-label">
+                                    <input
+                                        type="radio"
+                                        checked={String(value ?? '') === option.value}
+                                        onChange={() => setFieldValue(field, option.value)}
+                                    />
+                                    <span>{option.label}</span>
+                                </label>
+                            ))}
+                        </div>
+                    );
+                }
                 break;
             case 'file':
                 control = (
@@ -448,7 +476,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ vscode }) => {
                     <label><span>{field.label}</span></label>
                 )}
                 {control}
-                {field.description && (
+                {field.description && !isConnectionTypeField && (
                     <div className="cf-field-description">{field.description}</div>
                 )}
             </div>

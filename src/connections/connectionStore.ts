@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { ConnectionProfile, ConnectionSecrets } from "../core/types";
 import { ensureDPDirs, fileExists, readJson, writeJson } from "../core/fsWorkspace";
 import { Logger } from '../core/logger';
+import { normalizeConnectionType } from './connectionType';
 
 let secretStorage: vscode.SecretStorage | undefined;
 
@@ -47,6 +48,11 @@ export async function loadConnectionProfiles(): Promise<ConnectionProfile[]> {
           delete legacy.type;
           changed = true;
         }
+        const normalizedConnectionType = normalizeConnectionType(legacy.connectionType);
+        if (legacy.connectionType !== normalizedConnectionType) {
+          legacy.connectionType = normalizedConnectionType;
+          changed = true;
+        }
       });
 
       if (changed) {
@@ -67,6 +73,7 @@ export async function saveConnectionProfile(profile: ConnectionProfile): Promise
     throw new Error("No workspace folder open.");
   }
   let connections = await loadConnectionProfiles();
+  profile.connectionType = normalizeConnectionType(profile.connectionType);
 
   const idx = connections.findIndex(c => c.id === profile.id);
   if (idx >= 0) {

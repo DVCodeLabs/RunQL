@@ -39,6 +39,7 @@ const KEY_INFO_RESPONSE = {
     connection_name: 'Test Connection',
     dbms: 'postgres',
     database_name: 'appdb',
+    connection_type: 'data_access' as const,
     allow_csv_export: true,
     user_id: 42,
 };
@@ -77,6 +78,22 @@ describe('SecureQLAdapter', () => {
             expect(profile.secureqlConnectionId).toBe('123');
             expect(profile.secureqlTargetDbms).toBe('postgres');
             expect(profile.sqlDialect).toBe('postgres');
+            expect(profile.connectionType).toBe('data_access');
+        });
+
+        it('syncs db_admin metadata with nullable database_name', async () => {
+            mockedGetKeyInfo.mockResolvedValue({
+                ...KEY_INFO_RESPONSE,
+                database_name: null,
+                connection_type: 'db_admin',
+            });
+            const adapter = new SecureQLAdapter();
+            const profile = makeProfile();
+            await adapter.testConnection(profile, TEST_SECRETS);
+
+            expect(profile.connectionType).toBe('db_admin');
+            expect(profile.secureqlTargetDbms).toBe('postgres');
+            expect(mockedGetSchema).toHaveBeenCalledTimes(1);
         });
 
         it('does not persist an unsaved profile (no id)', async () => {
@@ -262,6 +279,18 @@ describe('SecureQLAdapter', () => {
             await adapter.testConnection(profile, TEST_SECRETS);
 
             expect(profile.allowCsvExport).toBe(false);
+        });
+
+        it('normalizes missing connectionType to data_access', async () => {
+            mockedGetKeyInfo.mockResolvedValue({
+                ...KEY_INFO_RESPONSE,
+                connection_type: undefined,
+            });
+            const adapter = new SecureQLAdapter();
+            const profile = makeProfile({ connectionType: 'db_admin' });
+            await adapter.testConnection(profile, TEST_SECRETS);
+
+            expect(profile.connectionType).toBe('data_access');
         });
     });
 });

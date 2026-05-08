@@ -120,7 +120,7 @@ export const BUILTIN_PROVIDERS: DPProviderDescriptor[] = [
                 ...SSH_TUNNEL_FIELDS
             ]
         },
-        supports: { ssl: true, oauth: false, keypair: false, introspection: true, cancellation: true }
+        supports: { ssl: true, oauth: false, keypair: false, introspection: true, cancellation: true, dbAdminConnectionType: true }
     },
     {
         providerId: 'mysql',
@@ -152,6 +152,38 @@ export const BUILTIN_PROVIDERS: DPProviderDescriptor[] = [
                 ...SSH_TUNNEL_FIELDS
             ]
         },
-        supports: { ssl: true, oauth: false, keypair: false, introspection: true, cancellation: true }
+        supports: { ssl: true, oauth: false, keypair: false, introspection: true, cancellation: true, dbAdminConnectionType: true }
+    },
+    {
+        providerId: 'mariadb',
+        displayName: 'MariaDB',
+        dialect: 'mariadb',
+        formSchema: {
+            fields: [
+                { key: 'host', label: 'Host', type: 'text', tab: 'connection', storage: 'profile', required: true, defaultValue: 'localhost', width: 'half' },
+                { key: 'port', label: 'Port', type: 'number', tab: 'connection', storage: 'profile', required: true, defaultValue: 3306, width: 'half' },
+                { key: 'database', label: 'Database', type: 'text', tab: 'connection', storage: 'profile', required: true, width: 'full' },
+                { key: 'ssl', label: 'Use SSL', type: 'checkbox', tab: 'connection', storage: 'profile', defaultValue: false, width: 'full' },
+                {
+                    key: 'sslMode',
+                    label: 'SSL Mode',
+                    type: 'select',
+                    tab: 'connection',
+                    storage: 'profile',
+                    defaultValue: 'disable',
+                    options: [
+                        { value: 'disable', label: 'Disable' },
+                        { value: 'require', label: 'Require' },
+                        { value: 'verify-ca', label: 'Verify CA' },
+                        { value: 'verify-full', label: 'Verify Full' }
+                    ],
+                    visibleWhen: { storage: 'profile', key: 'ssl', truthy: true }
+                },
+                { key: 'username', label: 'Username', type: 'text', tab: 'auth', storage: 'profile', required: true, width: 'full' },
+                { key: 'password', label: 'Password', type: 'password', tab: 'auth', storage: 'secrets', required: true, width: 'full' },
+                ...SSH_TUNNEL_FIELDS
+            ]
+        },
+        supports: { ssl: true, oauth: false, keypair: false, introspection: true, cancellation: true, dbAdminConnectionType: true }
     }
 ];

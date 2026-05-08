@@ -10,19 +10,21 @@
 ## Connection Management
 
 - Add, edit, test, remove, and select connections
-- Support for DuckDB, PostgreSQL, and MySQL in core
+- Built-in support for PostgreSQL, MySQL, and SecureQL
 - Provider/adapter extension points for additional databases
+- Optional SSH tunnel settings for built-in PostgreSQL and MySQL connections
 
 ## Schema Introspection
 
 - Introspect schemas and tables per connection
-- Persist snapshots in `RunQL/schemas/`
+- Persist schema bundles in `RunQL/schemas/<connection>/`
 - Use snapshots for autocomplete and ERD generation
+- Compare schemas and tables from introspection snapshots
 
 ## ERD
 
 - Render ERD for active connection or selected schema
-- Save ERD artifacts under `RunQL/system/erd/`
+- Save ERD artifacts in the matching schema bundle as `erd.json` and `erd.layout.json`
 
 ## Optional AI Helpers
 

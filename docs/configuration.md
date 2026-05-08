@@ -6,8 +6,13 @@ RunQL settings use the `runql.` prefix in VS Code.
 
 ### `runql.query.maxRowsLimit`
 - Type: number
-- Default: `1000`
-- Description: hard LIMIT for rows returned by SELECT queries. Set `0` to disable.
+- Default: `10000`
+- Description: hard LIMIT for rows returned by SELECT queries. Set `0` for no LIMIT, or use the Run Query (No Limit) command path when appropriate.
+
+### `runql.results.editing.enabled`
+- Type: boolean
+- Default: `true`
+- Description: enable inline editing and save-back in result sets when the active connection and result safety checks allow it.
 
 ## AI
 
@@ -68,6 +73,19 @@ RunQL settings use the `runql.` prefix in VS Code.
 - Type: string enum
 - Values: `postgresql`, `mysql`, `sql`
 - Default: `sql`
+- Description: fallback SQL formatter dialect when no active connection is selected.
+
+## Explorer UI
+
+### `runql.ui.showRoutines`
+- Type: boolean
+- Default: `true`
+- Description: show procedures and functions in the Explorer when introspection metadata is available.
+
+### `runql.ui.showRoutineParameters`
+- Type: boolean
+- Default: `true`
+- Description: show routine signature details in Explorer labels/tooltips when available.
 
 ## SQL CodeLens
 

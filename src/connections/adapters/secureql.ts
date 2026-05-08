@@ -16,6 +16,7 @@ import {
     RoutineParameterModel,
     NonQueryResult,
 } from '../../core/types';
+import { normalizeConnectionType, normalizeProfileConnectionType } from '../connectionType';
 
 // ── Request options helpers ─────────────────────────────────────────────────
 
@@ -44,15 +45,17 @@ async function resolveAndBuildRequestOptions(
     if (!profile.secureqlConnectionId) {
         profile.secureqlConnectionId = String(info.connection_id);
     }
-    if (!profile.secureqlTargetDbms) {
+    if (profile.secureqlTargetDbms !== info.dbms) {
         profile.secureqlTargetDbms = info.dbms;
     }
-    if (!profile.sqlDialect) {
+    if (profile.sqlDialect !== info.dbms) {
         profile.sqlDialect = info.dbms;
     }
 
-    // Always sync server-side CSV export flag
+    // Always sync server-side SecureQL metadata
+    profile.connectionType = normalizeConnectionType(info.connection_type);
     profile.allowCsvExport = info.allow_csv_export;
+    normalizeProfileConnectionType(profile);
 
     return { baseUrl, apiKey, connectionId: profile.secureqlConnectionId };
 }

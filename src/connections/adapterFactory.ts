@@ -22,6 +22,7 @@ function registerBuiltinAdapters() {
     if (adapterFactories.size > 0) return;
     adapterFactories.set('postgres', () => new PostgresAdapter());
     adapterFactories.set('mysql', () => new MySQLAdapter());
+    adapterFactories.set('mariadb', () => new MySQLAdapter('mariadb'));
     adapterFactories.set('secureql', () => new SecureQLAdapter(_saveProfileCallback));
 }
 

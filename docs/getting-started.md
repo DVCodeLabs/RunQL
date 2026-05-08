@@ -7,7 +7,7 @@ This guide walks through first use of RunQL in a normal folder-based project.
 Install from VS Code Marketplace or via CLI:
 
 ```bash
-code --install-extension runql.runql
+code --install-extension RunQL-VSCode-Extension.runql
 ```
 
 ## 2) Open a Workspace Folder
@@ -15,10 +15,10 @@ code --install-extension runql.runql
 RunQL initializes a `RunQL/` folder structure for:
 
 - `RunQL/queries/`
-- `RunQL/schemas/`
+- `RunQL/schemas/<connection>/`
 - `RunQL/system/`
 
-These artifacts are designed to be committed and reviewed with your project.
+Query files and schema bundles are designed to be committed and reviewed with your project. `RunQL/system/` contains generated indexes, prompts, migrations, and migration backups; teams usually review it before deciding what to commit.
 
 ## 3) Run Your First Query
 
@@ -38,6 +38,11 @@ These artifacts are designed to be committed and reviewed with your project.
 ## 5) Generate ERD
 
 Run `RunQL: View ERD (Active Connection)` or `RunQL: View ERD (Selected Schema)` to render schema structure and save ERD artifacts.
+
+ERD output is stored in the matching schema bundle:
+
+- `RunQL/schemas/<connection>/erd.json`
+- `RunQL/schemas/<connection>/erd.layout.json`
 
 ## Offline Notes
 

@@ -10,7 +10,7 @@
 export function mapDatabaseError(error: unknown): string {
     if (!error) return 'Connection test failed';
 
-    const e = error as { code?: string; message?: string; name?: string; constructor?: { name?: string }; errors?: unknown[] };
+    const e = error as { code?: string; errno?: number; message?: string; name?: string; constructor?: { name?: string }; errors?: unknown[] };
     const code = e.code;
     const message = e.message || '';
 
@@ -61,10 +61,24 @@ export function mapDatabaseError(error: unknown): string {
             return 'Permission denied. Check file or socket permissions.';
         case 'EADDRINUSE':
             return 'Address already in use. Another process may be using the port.';
+        case 'ER_ACCESS_DENIED_ERROR':
+            return formatMySqlAccessDenied(message);
         default:
+            if (e.errno === 1045) {
+                return formatMySqlAccessDenied(message);
+            }
             // Return original message if available, otherwise generic
             return message || 'Connection test failed. Check your connection settings.';
     }
+}
+
+function formatMySqlAccessDenied(message: string): string {
+    const clientHost = message.match(/@'([^']+)'/)?.[1];
+    const hostContext = clientHost
+        ? ` MySQL reported the incoming client as '${clientHost}'; this is the client address as seen by the server, not the configured host.`
+        : '';
+
+    return `Authentication failed. Check username, password, and MySQL user host permissions.${hostContext}`;
 }
 
 /**

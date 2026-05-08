@@ -1,7 +1,6 @@
 # RunQL
 
 [![Tests](https://github.com/DVCodeLabs/RunQL/actions/workflows/test.yml/badge.svg)](https://github.com/DVCodeLabs/RunQL/actions/workflows/test.yml)
-[![Version](https://img.shields.io/visual-studio-marketplace/v/RunQL-VSCode-Extension.runql?label=version)](https://marketplace.visualstudio.com/items?itemName=RunQL-VSCode-Extension.runql)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 [![VS Code](https://img.shields.io/badge/vscode-%5E1.96.0-007ACC)](https://code.visualstudio.com/)
 
@@ -12,9 +11,9 @@ SQL workflows, connections, and ERD tooling in VS Code.
 RunQL keeps SQL authoring, execution, schema introspection, and ERD visualization in one workspace flow.
 
 - Run SQL with a dedicated results panel
-- Manage and introspect connections (DuckDB, Postgres, MySQL)
+- Manage and introspect connections (PostgreSQL, MySQL, SecureQL, and registered connector extensions)
 - Export query/table results as CSV
-- Generate ERD artifacts as JSON you can commit
+- Generate schema and ERD bundle artifacts as JSON you can commit
 - Optionally generate docs/comments with AI providers you control
 
 RunQL is offline-first by default. External DB connections and hosted AI providers require network access when used.
@@ -28,12 +27,12 @@ RunQL is offline-first by default. External DB connections and hosted AI provide
 
 ### Connections + Introspection
 - Add/test/select connections and introspect schemas
-- Persist schema snapshots as JSON in `RunQL/schemas/`
+- Persist schema bundles as JSON under `RunQL/schemas/<connection>/`
 - Use introspection for autocomplete and ERD generation
 
 ### ERD
 - Generate ERDs for active connections or specific schemas
-- Save ERD artifacts under `RunQL/system/erd/*.erd.json`
+- Save ERD artifacts in each schema bundle as `erd.json` and `erd.layout.json`
 
 ### Optional AI Integration
 - Generate companion Markdown docs and inline SQL comments
@@ -47,7 +46,7 @@ RunQL is offline-first by default. External DB connections and hosted AI provide
 
 ### CLI (after Marketplace publish)
 ```bash
-code --install-extension runql.runql
+code --install-extension RunQL-VSCode-Extension.runql
 ```
 
 ### Manual VSIX
@@ -55,13 +54,13 @@ code --install-extension runql.runql
 ```bash
 npm ci
 npx vsce package --target darwin-arm64  # use your platform
-code --install-extension runql-darwin-arm64-1.2.1.vsix
+code --install-extension runql-*.vsix
 ```
 
 ## Quick Start
 
 ### 1. Open a workspace folder
-RunQL initializes a `RunQL/` structure for queries, schemas, and system artifacts.
+RunQL initializes a `RunQL/` structure for queries, per-connection schema bundles, and generated system artifacts.
 
 ### 2. Run your first SQL query
 - Create/open a `.sql` file
@@ -80,12 +79,14 @@ RunQL initializes a `RunQL/` structure for queries, schemas, and system artifact
 Common settings (VS Code settings key prefix: `runql.`):
 
 - `runql.query.maxRowsLimit`: hard result limit for SELECT queries (`0` disables limit)
+- `runql.results.editing.enabled`: enable guarded inline editing for supported result sets
 - `runql.ai.source`: `automatic|githubCopilot|aiExtension|directApi|off`
 - `runql.ai.apiProvider`: direct API provider selection when `runql.ai.source = directApi`
 - `runql.ai.model`: AI model selection
 - `runql.ai.apiBaseUrl`: custom base URL for Azure OpenAI, OpenAI-compatible APIs, or non-default Ollama setups
 - `runql.ai.sendSchemaContext`: include schema context in AI prompts
 - `runql.format.enabled`: enable SQL formatting
+- `runql.ui.showRoutines`: show procedures/functions in the Explorer
 
 Full reference: [`docs/configuration.md`](docs/configuration.md)
 

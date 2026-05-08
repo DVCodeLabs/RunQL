@@ -1,9 +1,17 @@
 
 import { DbAdapter } from './adapter';
-import { ConnectionProfile, ConnectionSecrets, QueryColumn, QueryResult, QueryRunOptions, RoutineKind, SchemaIntrospection, TableModel, ColumnModel, ForeignKeyModel, IndexModel, RoutineModel } from '../../core/types';
+import { ConnectionProfile, ConnectionSecrets, DbDialect, QueryColumn, QueryResult, QueryRunOptions, RoutineKind, SchemaIntrospection, TableModel, ColumnModel, ForeignKeyModel, IndexModel, RoutineModel } from '../../core/types';
 import * as mysql from 'mysql2/promise';
 import { Logger } from '../../core/logger';
 import { openSshTunnel } from './sshTunnel';
+import { isDbAdminConnection } from '../connectionType';
+
+const MYSQL_SYSTEM_SCHEMAS = ['information_schema', 'mysql', 'performance_schema', 'sys'];
+const MYSQL_ADMIN_SCHEMAS = ['information_schema', 'performance_schema', 'sys', 'mysql'];
+
+function placeholders(values: string[]): string {
+    return values.map(() => '?').join(', ');
+}
 
 /** Row returned as positional array from information_schema.schemata */
 type SchemaRow = [string]; // [schema_name]
@@ -37,7 +45,11 @@ interface MySQLSchemaEntry {
 }
 
 export class MySQLAdapter implements DbAdapter {
-    readonly dialect = 'mysql';
+    readonly dialect: DbDialect;
+
+    constructor(dialect: DbDialect = 'mysql') {
+        this.dialect = dialect;
+    }
 
     async testConnection(profile: ConnectionProfile, secrets: ConnectionSecrets): Promise<void> {
         const { conn, cleanup } = await this.createConnectedClient(profile, secrets);
@@ -126,10 +138,32 @@ export class MySQLAdapter implements DbAdapter {
         let tableTypeRows: TableTypeRow[] = [];
 
         try {
-            // Filter by the specific database configured in the profile
             const dbName = profile.database;
+            const isDbAdmin = isDbAdminConnection(profile);
 
-            if (dbName) {
+            if (isDbAdmin) {
+                const [sRows] = await connArr.execute(
+                    `SELECT schema_name FROM information_schema.schemata WHERE schema_name IN (${placeholders(MYSQL_ADMIN_SCHEMAS)})`,
+                    MYSQL_ADMIN_SCHEMAS
+                );
+                schemaRows = sRows as SchemaRow[];
+
+                const sql = `
+                    SELECT table_schema, table_name, column_name, data_type, is_nullable, column_comment, column_key
+                    FROM information_schema.columns
+                    WHERE table_schema IN (${placeholders(MYSQL_ADMIN_SCHEMAS)})
+                    ORDER BY table_schema, table_name, ordinal_position
+                `;
+                const [cRows] = await connArr.execute(sql, MYSQL_ADMIN_SCHEMAS);
+                columnRows = cRows as ColumnRow[];
+
+                const [tRows] = await connArr.execute(
+                    `SELECT table_schema, table_name, table_type FROM information_schema.tables
+                     WHERE table_schema IN (${placeholders(MYSQL_ADMIN_SCHEMAS)})`,
+                    MYSQL_ADMIN_SCHEMAS
+                );
+                tableTypeRows = tRows as TableTypeRow[];
+            } else if (dbName) {
                 const [sRows] = await connArr.execute('SELECT schema_name FROM information_schema.schemata WHERE schema_name = ?', [dbName]);
                 schemaRows = sRows as SchemaRow[];
 
@@ -152,22 +186,26 @@ export class MySQLAdapter implements DbAdapter {
             } else {
                 // Fallback: If no database specified, fetch all non-system schemas (or maybe we should just return empty?)
                 // For now, preserving old behavior if no DB is specified, but usually DB is required.
-                const [sRows] = await connArr.execute('SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN (\'information_schema\', \'mysql\', \'performance_schema\', \'sys\')');
+                const [sRows] = await connArr.execute(
+                    `SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN (${placeholders(MYSQL_SYSTEM_SCHEMAS)})`,
+                    MYSQL_SYSTEM_SCHEMAS
+                );
                 schemaRows = sRows as SchemaRow[];
 
                 const sql = `
                     SELECT table_schema, table_name, column_name, data_type, is_nullable, column_comment, column_key
                     FROM information_schema.columns
-                    WHERE table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+                    WHERE table_schema NOT IN (${placeholders(MYSQL_SYSTEM_SCHEMAS)})
                     ORDER BY table_schema, table_name, ordinal_position
                 `;
-                const [cRows] = await connArr.execute(sql);
+                const [cRows] = await connArr.execute(sql, MYSQL_SYSTEM_SCHEMAS);
                 columnRows = cRows as ColumnRow[];
 
                 // 2b. Get table types (BASE TABLE vs VIEW)
                 const [tRows] = await connArr.execute(
                     `SELECT table_schema, table_name, table_type FROM information_schema.tables
-                     WHERE table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')`
+                     WHERE table_schema NOT IN (${placeholders(MYSQL_SYSTEM_SCHEMAS)})`,
+                    MYSQL_SYSTEM_SCHEMAS
                 );
                 tableTypeRows = tRows as TableTypeRow[];
             }
@@ -238,9 +276,26 @@ export class MySQLAdapter implements DbAdapter {
         const { conn: connIdx, cleanup: cleanupIdx } = await this.createConnectedClient(profile, secrets, true);
         try {
             const dbName = profile.database;
+            const isDbAdmin = isDbAdminConnection(profile);
             let idxRows: IndexRow[] = [];
 
-            if (dbName) {
+            if (isDbAdmin) {
+                const idxSql = `
+                    SELECT
+                        TABLE_SCHEMA,
+                        TABLE_NAME,
+                        INDEX_NAME,
+                        NON_UNIQUE,
+                        COLUMN_NAME,
+                        SEQ_IN_INDEX
+                    FROM information_schema.STATISTICS
+                    WHERE TABLE_SCHEMA IN (${placeholders(MYSQL_ADMIN_SCHEMAS)})
+                      AND INDEX_NAME != 'PRIMARY'
+                    ORDER BY TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX
+                `;
+                const [rows] = await connIdx.execute(idxSql, MYSQL_ADMIN_SCHEMAS);
+                idxRows = rows as IndexRow[];
+            } else if (dbName) {
                 const idxSql = `
                     SELECT
                         TABLE_SCHEMA,
@@ -266,11 +321,11 @@ export class MySQLAdapter implements DbAdapter {
                         COLUMN_NAME,
                         SEQ_IN_INDEX
                     FROM information_schema.STATISTICS
-                    WHERE TABLE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+                    WHERE TABLE_SCHEMA NOT IN (${placeholders(MYSQL_SYSTEM_SCHEMAS)})
                       AND INDEX_NAME != 'PRIMARY'
                     ORDER BY TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX
                 `;
-                const [rows] = await connIdx.execute(idxSql);
+                const [rows] = await connIdx.execute(idxSql, MYSQL_SYSTEM_SCHEMAS);
                 idxRows = rows as IndexRow[];
             }
 
@@ -312,9 +367,26 @@ export class MySQLAdapter implements DbAdapter {
         const { conn: connFK, cleanup: cleanupFK } = await this.createConnectedClient(profile, secrets, true);
         try {
             const dbName = profile.database;
+            const isDbAdmin = isDbAdminConnection(profile);
             let fkRows: FKRow[] = [];
 
-            if (dbName) {
+            if (isDbAdmin) {
+                const fkSql = `
+                    SELECT
+                        kcu.TABLE_SCHEMA,
+                        kcu.TABLE_NAME,
+                        kcu.COLUMN_NAME,
+                        kcu.CONSTRAINT_NAME,
+                        kcu.REFERENCED_TABLE_SCHEMA,
+                        kcu.REFERENCED_TABLE_NAME,
+                        kcu.REFERENCED_COLUMN_NAME
+                    FROM information_schema.KEY_COLUMN_USAGE kcu
+                    WHERE kcu.TABLE_SCHEMA IN (${placeholders(MYSQL_ADMIN_SCHEMAS)})
+                      AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
+                `;
+                const [rows] = await connFK.execute(fkSql, MYSQL_ADMIN_SCHEMAS);
+                fkRows = rows as FKRow[];
+            } else if (dbName) {
                 const fkSql = `
                     SELECT
                         kcu.TABLE_SCHEMA,
@@ -341,10 +413,10 @@ export class MySQLAdapter implements DbAdapter {
                         kcu.REFERENCED_TABLE_NAME,
                         kcu.REFERENCED_COLUMN_NAME
                     FROM information_schema.KEY_COLUMN_USAGE kcu
-                    WHERE kcu.TABLE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+                    WHERE kcu.TABLE_SCHEMA NOT IN (${placeholders(MYSQL_SYSTEM_SCHEMAS)})
                       AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
                 `;
-                const [rows] = await connFK.execute(fkSql);
+                const [rows] = await connFK.execute(fkSql, MYSQL_SYSTEM_SCHEMAS);
                 fkRows = rows as FKRow[];
             }
 
@@ -380,9 +452,25 @@ export class MySQLAdapter implements DbAdapter {
         const { conn: connRoutine, cleanup: cleanupRoutine } = await this.createConnectedClient(profile, secrets, true);
         try {
             const dbName = profile.database;
+            const isDbAdmin = isDbAdminConnection(profile);
             let routineRows: RoutineRow[] = [];
 
-            if (dbName) {
+            if (isDbAdmin) {
+                const routineSql = `
+                    SELECT
+                        ROUTINE_SCHEMA,
+                        ROUTINE_NAME,
+                        ROUTINE_TYPE,
+                        ROUTINE_COMMENT,
+                        DTD_IDENTIFIER,
+                        IS_DETERMINISTIC
+                    FROM information_schema.ROUTINES
+                    WHERE ROUTINE_SCHEMA IN (${placeholders(MYSQL_ADMIN_SCHEMAS)})
+                    ORDER BY ROUTINE_SCHEMA, ROUTINE_NAME
+                `;
+                const [rows] = await connRoutine.execute(routineSql, MYSQL_ADMIN_SCHEMAS);
+                routineRows = rows as RoutineRow[];
+            } else if (dbName) {
                 const routineSql = `
                     SELECT
                         ROUTINE_SCHEMA,
@@ -407,10 +495,10 @@ export class MySQLAdapter implements DbAdapter {
                         DTD_IDENTIFIER,
                         IS_DETERMINISTIC
                     FROM information_schema.ROUTINES
-                    WHERE ROUTINE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+                    WHERE ROUTINE_SCHEMA NOT IN (${placeholders(MYSQL_SYSTEM_SCHEMAS)})
                     ORDER BY ROUTINE_SCHEMA, ROUTINE_NAME
                 `;
-                const [rows] = await connRoutine.execute(routineSql);
+                const [rows] = await connRoutine.execute(routineSql, MYSQL_SYSTEM_SCHEMAS);
                 routineRows = rows as RoutineRow[];
             }
 
@@ -461,7 +549,7 @@ export class MySQLAdapter implements DbAdapter {
             generatedAt: new Date().toISOString(),
             connectionId: profile.id,
             connectionName: profile.name,
-            dialect: 'mysql',
+            dialect: this.dialect,
             schemas
         };
     }
@@ -476,7 +564,7 @@ export class MySQLAdapter implements DbAdapter {
             port: profile.port || 3306,
             user: profile.username,
             password: secrets.password,
-            database: profile.database,
+            database: isDbAdminConnection(profile) ? undefined : profile.database,
             ssl: profile.ssl ? {
                 rejectUnauthorized: profile.sslMode === 'verify-full' || profile.sslMode === 'verify-ca'
             } : undefined,
