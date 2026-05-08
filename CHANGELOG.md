@@ -102,3 +102,11 @@ Add a one-time startup migration that:
 - normalizes bundle layout sidecars to erd.layout.json
 
 Also update watchers, docs, and tests for the new storage layout.
+
+## [1.7.0] - 2026-05-07
+
+### Added
+1. Added support to connect to admin schemas and views for a dbms (db admin).
+- This will return all admin schemas/views in one connection (e.g. information_schema, performance_schema, etc.)
+- When creating a connection you now choose between two types: data access or db admin.
+- This is supported for all connections including SecureQL.
