@@ -2,6 +2,9 @@ import * as vscode from 'vscode';
 import { ensureDPDirs, fileExists, readJson, writeJson } from '../core/fsWorkspace';
 import { Logger } from '../core/logger';
 import { sanitizeSchemaBundleName } from '../schema/schemaPaths';
+import { HistoryService } from '../services/historyService';
+import { buildSearchText } from './mdParser';
+import { queryIndex } from './queryIndex';
 import { QueryIndexFile } from './queryIndexer';
 
 export const UNASSIGNED_QUERY_FOLDER = 'Unassigned';
@@ -95,6 +98,16 @@ async function updateQueryIndexConnectionName(oldFolder: vscode.Uri, newFolder: 
           entry.docPath = `${newRel}/${entry.docPath.slice(oldRel.length + 1)}`;
         }
         entry.connectionName = newName;
+        entry.searchText = buildSearchText({
+          title: entry.title,
+          mdTitle: entry.mdTitle,
+          mdTags: entry.mdTags,
+          mdBodyText: entry.mdBodyText,
+          path: entry.path,
+          connectionName: entry.connectionName ?? undefined,
+          dialect: entry.dialect ?? undefined,
+        });
+        entry.searchUpdatedAt = new Date().toISOString();
       }
     }
     await writeJson(indexUri, index);
@@ -103,14 +116,40 @@ async function updateQueryIndexConnectionName(oldFolder: vscode.Uri, newFolder: 
   }
 }
 
+async function updateQueryHistoryConnectionName(connectionId: string, oldName: string, newName: string): Promise<void> {
+  const dpDir = await ensureDPDirs();
+  const historyUri = vscode.Uri.joinPath(dpDir, 'system', 'queries', 'queryHistory.json');
+  if (!await fileExists(historyUri)) return;
+
+  try {
+    const history = await readJson<Array<{ connectionId?: string; connectionName?: string }>>(historyUri);
+    let changed = false;
+    for (const entry of history) {
+      if (entry.connectionId === connectionId || (!entry.connectionId && entry.connectionName === oldName)) {
+        entry.connectionName = newName;
+        changed = true;
+      }
+    }
+    if (changed) {
+      await writeJson(historyUri, history);
+    }
+  } catch (err) {
+    Logger.warn('Failed to update query history after connection rename', err);
+  }
+}
+
 export async function renameQueryConnectionFolder(connectionId: string, oldName: string, newName: string): Promise<void> {
   const dpDir = await ensureDPDirs();
   const oldDir = getConnectionQueriesDir(dpDir, oldName, connectionId);
-  if (!await fileExists(oldDir)) return;
+  if (!await fileExists(oldDir)) {
+    await updateConnectionScopedMetadata(connectionId, oldName, newName, oldDir, getConnectionQueriesDir(dpDir, newName, connectionId));
+    return;
+  }
 
   let newDir = getConnectionQueriesDir(dpDir, newName, connectionId);
   if (oldDir.fsPath === newDir.fsPath) {
     await updateMarkdownFiles(oldDir, (content) => updateFrontmatterField(content, 'connection', newName));
+    await updateConnectionScopedMetadata(connectionId, oldName, newName, oldDir, newDir);
     return;
   }
 
@@ -126,7 +165,24 @@ export async function renameQueryConnectionFolder(connectionId: string, oldName:
   }
 
   await updateMarkdownFiles(newDir, (content) => updateFrontmatterField(content, 'connection', newName));
+  await updateConnectionScopedMetadata(connectionId, oldName, newName, oldDir, newDir);
+}
+
+async function updateConnectionScopedMetadata(
+  connectionId: string,
+  oldName: string,
+  newName: string,
+  oldDir: vscode.Uri,
+  newDir: vscode.Uri
+): Promise<void> {
   await updateQueryIndexConnectionName(oldDir, newDir, newName);
+  await queryIndex.handleConnectionFolderRename(oldDir, newDir, newName);
+  await updateQueryHistoryConnectionName(connectionId, oldName, newName);
+  try {
+    await HistoryService.getInstance().updateConnectionName(connectionId, oldName, newName);
+  } catch (err) {
+    Logger.warn('Failed to update query history after connection rename', err);
+  }
 }
 
 export async function archiveQueryConnectionFolder(connectionId: string, connectionName?: string): Promise<void> {

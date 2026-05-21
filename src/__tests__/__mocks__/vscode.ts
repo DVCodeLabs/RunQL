@@ -26,6 +26,13 @@ export enum TreeItemCollapsibleState {
   Expanded = 2,
 }
 
+export enum FileType {
+  Unknown = 0,
+  File = 1,
+  Directory = 2,
+  SymbolicLink = 64,
+}
+
 export enum ViewColumn {
   Active = -1,
   Beside = -2,
@@ -144,6 +151,13 @@ export const workspace = {
     stat: jest.fn(),
     rename: jest.fn(),
   },
+  createFileSystemWatcher: jest.fn().mockReturnValue({
+    onDidChange: jest.fn(),
+    onDidCreate: jest.fn(),
+    onDidDelete: jest.fn(),
+    dispose: jest.fn(),
+  }),
+  findFiles: jest.fn().mockResolvedValue([]),
   onDidChangeConfiguration: jest.fn(),
   onDidSaveTextDocument: jest.fn(),
   onDidChangeTextDocument: jest.fn(),

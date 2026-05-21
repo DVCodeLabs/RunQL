@@ -98,6 +98,26 @@ export class HistoryService {
         return this._history;
     }
 
+    public async updateConnectionName(connectionId: string, oldName: string, newName: string) {
+        if (!this._storagePath) {
+            await this.initialize();
+        }
+        this.loadHistory();
+
+        let changed = false;
+        for (const entry of this._history) {
+            if (entry.connectionId === connectionId || (!entry.connectionId && entry.connectionName === oldName)) {
+                entry.connectionName = newName;
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            this.saveHistory();
+            vscode.commands.executeCommand('runql.memoryRecall.refresh');
+        }
+    }
+
     private pruneOldEntries() {
         const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
         const cutoff = Date.now() - SEVEN_DAYS_MS;

@@ -366,6 +366,48 @@ export class QueryIndex {
         }
     }
 
+    async handleConnectionFolderRename(oldFolder: vscode.Uri, newFolder: vscode.Uri, newName: string) {
+        const oldRel = vscode.workspace.asRelativePath(oldFolder, false).replace(/\\/g, '/');
+        const newRel = vscode.workspace.asRelativePath(newFolder, false).replace(/\\/g, '/');
+        const entries = Array.from(this.pathIndex.entries());
+        let changed = false;
+
+        for (const [pathKey, entry] of entries) {
+            if (!entry.path.startsWith(`${oldRel}/`)) continue;
+
+            const nextPath = `${newRel}/${entry.path.slice(oldRel.length + 1)}`;
+            const previousConnectionName = entry.connectionName;
+
+            entry.path = nextPath;
+            if (entry.docPath?.startsWith(`${oldRel}/`)) {
+                entry.docPath = `${newRel}/${entry.docPath.slice(oldRel.length + 1)}`;
+            }
+            entry.connectionName = newName;
+            entry.updatedAt = new Date().toISOString();
+            entry.searchText = buildSearchText({
+                title: entry.title,
+                mdTitle: entry.mdTitle,
+                mdTags: entry.mdTags,
+                mdBodyText: entry.mdBodyText,
+                path: entry.path,
+                connectionName: entry.connectionName ?? undefined,
+                dialect: entry.dialect ?? undefined,
+            });
+            entry.searchUpdatedAt = new Date().toISOString();
+
+            if (pathKey !== nextPath) {
+                this.pathIndex.delete(pathKey);
+                this.pathIndex.set(nextPath, entry);
+            }
+            changed = changed || pathKey !== nextPath || previousConnectionName !== newName;
+        }
+
+        if (changed) {
+            this.rebuildHashIndex();
+            await this.persist();
+        }
+    }
+
     removeFile(uri: vscode.Uri) {
         const wsRelative = vscode.workspace.asRelativePath(uri, false);
         if (this.pathIndex.delete(wsRelative)) {
