@@ -151,3 +151,8 @@ Archive deleted schema(s) during introspection refresh
 - Move schema(s) missing from a successful refresh (means they were removed) into RunQL/schemas/deleted/
 - Remove the schema(s) from the active manifest and Explorer.
 - Update generated agent guidance to ignore deleted schema archives by default.
+
+## [1.9.1] - 2026-05-21
+
+### Changes
+Add product gif for readme
