@@ -27,7 +27,7 @@ Query files and schema bundles are designed to be committed and reviewed with yo
 3. Run `RunQL: Run Query` (default keybinding: `Shift+Cmd+R` in SQL editors)
 4. Review results in `RunQL: Results`
 
-![Run SQL in editor and inspect results](../media/marketplace/screenshots/quickstart-run-sql.png)
+![Run SQL in editor and inspect results](../media/marketplace/screenshots/quickstart-run-sql.gif)
 
 ## 4) Introspect Schemas
 

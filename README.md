@@ -67,7 +67,7 @@ RunQL initializes a `RunQL/` structure for queries, per-connection schema bundle
 - Select a connection
 - Run query with `Shift+Cmd+R`
 
-![Run SQL and inspect results](media/marketplace/screenshots/quickstart-run-sql.png)
+![Run SQL and inspect results](media/marketplace/screenshots/quickstart-run-sql.gif)
 
 ### 3. Introspect and explore schema
 - Run `RunQL: Refresh All Schemas`
