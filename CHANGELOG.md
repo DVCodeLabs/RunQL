@@ -155,4 +155,5 @@ Archive deleted schema(s) during introspection refresh
 ## [1.9.1] - 2026-05-21
 
 ### Changes
-Add product gif for readme
+- Changes to ensure QueryIndex and QueryHistory get updated if a connection is renamed.
+- Add product gif for readme.
