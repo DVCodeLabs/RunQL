@@ -162,3 +162,9 @@ Archive deleted schema(s) during introspection refresh
 
 ### Added
 - Add query approval support for SecureQL connections.
+
+## [1.10.1]
+
+### Added
+- Query approval support for SecureQL connections are here!
+- Change the What's New section on the Welcome page to be autopopulated by the ChangeLog content.

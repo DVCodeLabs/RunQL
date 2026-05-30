@@ -18,6 +18,18 @@ type InitStructureEntry = {
 type StructureIconKind = 'folder' | 'file';
 type WelcomeMode = 'welcome' | 'whatsNew';
 
+type ChangelogSection = {
+    title: string;
+    paragraphs: string[];
+    items: string[];
+};
+
+type ChangelogEntry = {
+    version: string;
+    date?: string;
+    sections: ChangelogSection[];
+};
+
 type AISettingDoc = {
     name: string;
     summary: string;
@@ -286,21 +298,17 @@ const styles: Record<string, React.CSSProperties> = {
         color: 'var(--vscode-descriptionForeground)',
         flex: '0 0 auto'
     },
-    lead: {
-        marginTop: '10px',
-        marginBottom: 0,
-        fontSize: '14px',
-        color: 'var(--vscode-descriptionForeground)',
-        lineHeight: 1.5
+    changelogMeta: {
+        marginTop: 0,
+        marginBottom: '12px',
+        fontSize: '12px',
+        color: 'var(--vscode-descriptionForeground)'
     },
-    callout: {
+    changelogSectionTitle: {
         marginTop: '12px',
-        padding: '12px 14px',
-        backgroundColor: 'var(--vscode-textBlockQuote-background)',
-        borderLeft: '3px solid var(--vscode-textLink-activeForeground)',
-        borderRadius: '4px',
+        marginBottom: '6px',
         fontSize: '13px',
-        lineHeight: 1.5
+        fontWeight: 700
     },
     settingsGrid: {
         display: 'grid',
@@ -368,11 +376,61 @@ function StructureIcon({ kind }: { kind: StructureIconKind }) {
     );
 }
 
+function renderInlineMarkdown(text: string): React.ReactNode {
+    const parts = text.split(/(`[^`]+`)/g);
+    return parts.map((part, index) => {
+        if (part.startsWith('`') && part.endsWith('`')) {
+            return <code key={index}>{part.slice(1, -1)}</code>;
+        }
+        return <React.Fragment key={index}>{part}</React.Fragment>;
+    });
+}
+
+function renderWhatsNewEntry(entry: ChangelogEntry | null, version: string) {
+    if (!entry) {
+        return (
+            <div style={styles.card}>
+                <h2 style={styles.cardTitle}>Latest Changes</h2>
+                <p style={styles.statusNote}>
+                    {version ? `No changelog entry was found for version ${version}.` : 'No changelog entry was found for this version.'}
+                </p>
+            </div>
+        );
+    }
+
+    return (
+        <div style={styles.card}>
+            <h2 style={styles.cardTitle}>Latest Changes</h2>
+            <p style={styles.changelogMeta}>
+                Version {entry.version}{entry.date ? ` - ${entry.date}` : ''}
+            </p>
+            {entry.sections.map(section => (
+                <div key={section.title}>
+                    <h3 style={styles.changelogSectionTitle}>{section.title}</h3>
+                    {section.paragraphs.map((paragraph, index) => (
+                        <p key={index} style={styles.statusNote}>
+                            {renderInlineMarkdown(paragraph)}
+                        </p>
+                    ))}
+                    {section.items.length > 0 && (
+                        <ul style={styles.bulletList}>
+                            {section.items.map((item, index) => (
+                                <li key={index}>{renderInlineMarkdown(item)}</li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            ))}
+        </div>
+    );
+}
+
 function App() {
     const [initialized, setInitialized] = useState<boolean | null>(null);
     const [hasWorkspace, setHasWorkspace] = useState<boolean | null>(null);
     const [mode, setMode] = useState<WelcomeMode>('welcome');
     const [version, setVersion] = useState<string>('');
+    const [whatsNewEntry, setWhatsNewEntry] = useState<ChangelogEntry | null>(null);
 
     useEffect(() => {
         // Listen for messages from extension
@@ -383,6 +441,7 @@ function App() {
                 setHasWorkspace(message.hasWorkspace);
                 setMode((message.mode as WelcomeMode) || 'welcome');
                 setVersion((message.version as string) || '');
+                setWhatsNewEntry((message.whatsNewEntry as ChangelogEntry | undefined) || null);
             }
         };
         window.addEventListener('message', handler);
@@ -429,51 +488,14 @@ function App() {
                 <h1 style={styles.title}>
                     {isWhatsNew ? "What's New in RunQL" : 'RunQL'}
                 </h1>
-                {isWhatsNew ? (
-                    <>
-                        <p style={styles.lead}>
-                            {version ? `Version ${version} removes the need to specify one schema per connection and file organization changes by connection name.` : 'This update changes how RunQL stores schemas and queries.'}
-                        </p>
-                        <div style={styles.callout}>
-                            RunQL no longer requires one schema per connection!<br />
-                            RunQL now stores schema assets and query assets inside a connection folder for better organization and context for AI.
-                        </div>
-                    </>
-                ) : (
+                {!isWhatsNew && (
                     <p style={styles.trustStatement}>
                         RunQL will not create project files until you click Initialize.
                     </p>
                 )}
             </div>
 
-            {isWhatsNew && (
-                <div style={styles.card}>
-                    <h2 style={styles.cardTitle}>Project Layout Has Changed</h2>
-                    <p style={{ ...styles.statusNote, marginBottom: '8px' }}>
-                        RunQL now stores multiple schemas inside a connection folder.
-                    </p>
-                    <ul style={styles.bulletList}>
-                        <li>Schemas now live under <code>RunQL/schemas/&lt;connection&gt;/&lt;schema&gt;/</code>.</li>
-                        <li>Each connection has a <code>manifest.json</code> that lists its available schema bundles.</li>
-                        <li>Saved queries now live under <code>RunQL/queries/&lt;connection&gt;/</code>.</li>
-                    </ul>
-                </div>
-            )}
-
-            {isWhatsNew && (
-                <div style={styles.card}>
-                    <h2 style={styles.cardTitle}>One-Time Automatic Migration</h2>
-                    <p style={{ ...styles.statusNote, marginBottom: '8px' }}>
-                        When an initialized project opens, RunQL upgrades existing schema and query files before normal indexing starts.
-                    </p>
-                    <ul style={styles.bulletList}>
-                        <li>Existing files are moved into schemas/connection_name/schema_name folders.</li>
-                        <li>Existing SQL bundles are moved into queries/connection folders.</li>
-                        <li>Any files that cannot be matched to a connection are moved to <code>RunQL/queries/Unassigned/</code>.</li>
-                        <li>Migration records and backups are stored under <code>RunQL/system/migration_backup/</code>.</li>
-                    </ul>
-                </div>
-            )}
+            {isWhatsNew && renderWhatsNewEntry(whatsNewEntry, version)}
 
             {/* Workspace Status */}
             <div style={styles.card}>

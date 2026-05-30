@@ -70,6 +70,19 @@ describe('mapSecureQLError', () => {
         expect(err.userMessage).toContain('not found');
     });
 
+    it('maps fully-qualified query validation errors to the server message', () => {
+        const message = 'The query was not run because table references must be fully qualified, for example schema.table. Unqualified table reference: users.';
+        const err = mapSecureQLError(400, {
+            title: 'Bad Request',
+            message,
+            code: 'QUERY_NOT_FULLY_QUALIFIED',
+        }, 'key123');
+
+        expect(err.statusCode).toBe(400);
+        expect(err.userMessage).toBe(message);
+        expect(err.userMessage).not.toContain('SecureQL server error');
+    });
+
     it('maps approval-required 202 responses to a typed approval error', () => {
         const err = mapSecureQLError(202, {
             status: 'approval_required',

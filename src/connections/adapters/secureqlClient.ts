@@ -12,7 +12,7 @@ export interface SecureQLRequestOptions {
 export interface SecureQLErrorPayload {
     title?: string;
     message?: string;
-    code?: number;
+    code?: number | string;
     status?: string;
     request_id?: string | number;
     submitted_at?: string;
@@ -173,6 +173,15 @@ export function mapSecureQLError(statusCode: number, body: SecureQLErrorPayload 
     }
 
     const safeMsg = redactSensitive(msg, apiKey);
+    if (
+        statusCode === 400
+        && typeof body === 'object'
+        && body.code === 'QUERY_NOT_FULLY_QUALIFIED'
+        && safeMsg
+    ) {
+        return new SecureQLApiError(400, safeMsg, msg);
+    }
+
     return new SecureQLApiError(statusCode, `SecureQL server error (${statusCode}): ${safeMsg}`);
 }
 

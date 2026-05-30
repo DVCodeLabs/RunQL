@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { isProjectInitialized, updateProjectInitializedContext } from '../core/isProjectInitialized';
 import { fileExists } from '../core/fsWorkspace';
+import { ChangelogEntry, parseChangelogEntry } from './changelog';
 
 type WelcomeMode = 'welcome' | 'whatsNew';
 
@@ -15,6 +16,7 @@ export class WelcomeView {
     private readonly _extensionUri: vscode.Uri;
     private _mode: WelcomeMode;
     private _version?: string;
+    private _changelogEntry?: ChangelogEntry;
     private _disposables: vscode.Disposable[] = [];
 
     private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, options: WelcomeRenderOptions = {}) {
@@ -67,8 +69,25 @@ export class WelcomeView {
             initialized,
             hasWorkspace,
             mode: this._mode,
-            version: this._version
+            version: this._version,
+            whatsNewEntry: this._mode === 'whatsNew' ? await this._getWhatsNewEntry() : undefined
         });
+    }
+
+    private async _getWhatsNewEntry(): Promise<ChangelogEntry | undefined> {
+        if (this._changelogEntry?.version === this._version) {
+            return this._changelogEntry;
+        }
+
+        try {
+            const changelogUri = vscode.Uri.joinPath(this._extensionUri, 'CHANGELOG.md');
+            const changelogBytes = await vscode.workspace.fs.readFile(changelogUri);
+            const changelog = new TextDecoder('utf-8').decode(changelogBytes);
+            this._changelogEntry = parseChangelogEntry(changelog, this._version);
+            return this._changelogEntry;
+        } catch (_e: unknown) {
+            return undefined;
+        }
     }
 
     public dispose() {
