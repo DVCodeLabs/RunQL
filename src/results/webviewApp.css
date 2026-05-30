@@ -95,6 +95,15 @@ button:hover {
     background: var(--vscode-button-hoverBackground);
 }
 
+button:disabled {
+    cursor: default;
+    opacity: 0.9;
+}
+
+button:disabled:hover {
+    background: var(--vscode-button-background);
+}
+
 /* Font */
 button {
     font-family: var(--vscode-font-family);
@@ -453,4 +462,105 @@ button {
     flex: 1;
     overflow: hidden;
     min-height: 0;
+}
+
+.approval-state {
+    height: 100%;
+    overflow: auto;
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+.approval-card {
+    max-width: 720px;
+    border: 1px solid var(--vscode-widget-border);
+    border-radius: 6px;
+    background: var(--vscode-editor-background);
+    padding: 16px;
+}
+
+.approval-heading {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.approval-card p {
+    margin: 0 0 10px;
+    line-height: 1.45;
+}
+
+.approval-keep-open {
+    color: var(--vscode-descriptionForeground);
+}
+
+.approval-details {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 8px 14px;
+    margin: 16px 0;
+}
+
+.approval-details div {
+    display: contents;
+}
+
+.approval-details dt {
+    color: var(--vscode-descriptionForeground);
+    font-size: 12px;
+}
+
+.approval-details dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.approval-message {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 12px;
+    padding: 10px;
+    border-radius: 4px;
+    border: 1px solid var(--vscode-widget-border);
+    background: var(--vscode-editor-inactiveSelectionBackground);
+}
+
+.approval-message.error {
+    color: var(--vscode-errorForeground);
+    border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-widget-border));
+}
+
+.approval-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.approval-actions button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.approval-actions .approval-status-button {
+    background: var(--vscode-editor-inactiveSelectionBackground);
+    color: var(--vscode-descriptionForeground);
+    border: 1px solid var(--vscode-widget-border);
+}
+
+.approval-actions .approval-status-button:hover {
+    background: var(--vscode-editor-inactiveSelectionBackground);
+}
+
+.approval-actions .approval-secondary-button {
+    background: transparent;
+    color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+    border: 1px solid var(--vscode-button-secondaryBackground, var(--vscode-widget-border));
+}
+
+.approval-actions .approval-secondary-button:hover {
+    background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground));
 }

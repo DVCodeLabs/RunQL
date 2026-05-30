@@ -84,6 +84,30 @@ interface ResultsetEditsPreview {
     statements: string[];
 }
 
+interface QueryApprovalState {
+    requestId?: string;
+    status: string;
+    message: string;
+    submittedAt?: string;
+    connectionName?: string;
+    primaryCommandTag?: string;
+    reviewerDisplayName?: string;
+    reviewedAt?: string;
+    approvalExpiresAt?: string;
+    denialReason?: string;
+    executionStartedAt?: string;
+    executionCompletedAt?: string;
+    runtimeMs?: number;
+    executionErrorMessage?: string;
+    nextCheckAt?: string;
+    manualCheckAvailableAt?: string;
+    canStop: boolean;
+    canCheckStatus: boolean;
+    canResume: boolean;
+    canRequestApproval?: boolean;
+    canRunApprovedQuery?: boolean;
+}
+
 type PendingRowEdit = {
     rowKey: Record<string, unknown>;
     changes: Record<string, { oldValue: unknown; newValue: unknown }>;
@@ -378,6 +402,162 @@ const ChartsTab = ({
                 <div style={{ flex: 1, minHeight: 0, maxWidth: '100%' }}>
                     <Chart ref={chartRef} type={config.type || 'bar'} data={chartData} options={options} />
                 </div>
+            </div>
+        </div>
+    );
+};
+
+const formatApprovalDate = (value?: string): string | undefined => {
+    if (!value) return undefined;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+};
+
+const approvalStatusLabel = (status: string): string => {
+    switch (status) {
+        case 'approval_required':
+        case 'pending':
+            return 'Pending';
+        case 'approved':
+            return 'Approved';
+        case 'expired':
+            return 'Expired';
+        case 'executing':
+            return 'Executing';
+        case 'executed':
+            return 'Executed';
+        case 'denied':
+            return 'Denied';
+        case 'cancelled':
+            return 'Cancelled';
+        case 'execution_failed':
+            return 'Execution Failed';
+        case 'polling_failed':
+            return 'Checking Failed';
+        case 'polling_stopped':
+            return 'Checking Stopped';
+        default:
+            return status;
+    }
+};
+
+const formatApprovalCountdown = (nextCheckAt?: string): string | null => {
+    if (!nextCheckAt) return null;
+    const target = new Date(nextCheckAt).getTime();
+    if (Number.isNaN(target)) return null;
+    const remainingSeconds = Math.max(0, Math.ceil((target - Date.now()) / 1000));
+    return `${remainingSeconds}s`;
+};
+
+const getApprovalRemainingSeconds = (timestamp?: string): number | null => {
+    if (!timestamp) return null;
+    const target = new Date(timestamp).getTime();
+    if (Number.isNaN(target)) return null;
+    return Math.max(0, Math.ceil((target - Date.now()) / 1000));
+};
+
+const QueryApprovalView = ({ state }: { state: QueryApprovalState }) => {
+    const [, setClockTick] = useState(0);
+    useEffect(() => {
+        if (!state.nextCheckAt && !state.manualCheckAvailableAt) return;
+        const timer = window.setInterval(() => setClockTick((tick) => tick + 1), 1000);
+        return () => window.clearInterval(timer);
+    }, [state.nextCheckAt, state.manualCheckAvailableAt]);
+
+    const nextCheckCountdown = formatApprovalCountdown(state.nextCheckAt);
+    const manualCheckRemainingSeconds = getApprovalRemainingSeconds(state.manualCheckAvailableAt);
+    const manualCheckInCooldown = typeof manualCheckRemainingSeconds === 'number' && manualCheckRemainingSeconds > 0;
+    const heading = state.status === 'approval_required'
+        ? 'Approval Required'
+        : state.status === 'approved'
+            ? 'Approved'
+            : state.status === 'expired'
+                ? 'Approval Expired'
+                : 'Submitted for Approval';
+    const details = [
+        ['Status', approvalStatusLabel(state.status)],
+        ['Request ID', state.requestId],
+        ['Submitted', formatApprovalDate(state.submittedAt)],
+        ['Connection', state.connectionName],
+        ['Command', state.primaryCommandTag],
+        ['Reviewer', state.reviewerDisplayName],
+        ['Reviewed', formatApprovalDate(state.reviewedAt)],
+        ['Approval expires', formatApprovalDate(state.approvalExpiresAt)],
+        ['Execution started', formatApprovalDate(state.executionStartedAt)],
+        ['Execution completed', formatApprovalDate(state.executionCompletedAt)],
+        ['Runtime', typeof state.runtimeMs === 'number' ? `${state.runtimeMs} ms` : undefined],
+    ].filter(([, value]) => Boolean(value));
+
+    return (
+        <div className="approval-state">
+            <div className="approval-card">
+                <div className="approval-heading">{heading}</div>
+                <p>{state.message || 'This query requires approval before execution. Approval has been requested.'}</p>
+                <p className="approval-keep-open">Keep this query tab open. When this query is approved, you can click run and the query will execute.</p>
+
+                <dl className="approval-details">
+                    {details.map(([label, value]) => (
+                        <div key={label}>
+                            <dt>{label}</dt>
+                            <dd>{value}</dd>
+                        </div>
+                    ))}
+                </dl>
+
+                {state.denialReason && (
+                    <div className="approval-message">
+                        <strong>Denial reason</strong>
+                        <span>{state.denialReason}</span>
+                    </div>
+                )}
+                {state.executionErrorMessage && (
+                    <div className="approval-message error">
+                        <strong>Execution error</strong>
+                        <span>{state.executionErrorMessage}</span>
+                    </div>
+                )}
+
+                {(state.canStop || state.canCheckStatus || state.canResume || state.canRequestApproval || state.canRunApprovedQuery) && (
+                    <div className="approval-actions">
+                        {state.canStop && (
+                            <>
+                                {nextCheckCountdown && (
+                                    <button className="approval-status-button" disabled>
+                                        <RefreshCw size={14} /> Next check in {nextCheckCountdown}
+                                    </button>
+                                )}
+                                <button className="approval-secondary-button" onClick={() => vscode.postMessage({ command: 'queryApprovalStopChecking' })}>
+                                    Stop auto-check
+                                </button>
+                            </>
+                        )}
+                        {state.canCheckStatus && (
+                            <button
+                                disabled={manualCheckInCooldown}
+                                onClick={() => vscode.postMessage({ command: 'queryApprovalCheckStatus' })}
+                            >
+                                <RefreshCw size={14} />
+                                {manualCheckInCooldown ? `Check again in ${manualCheckRemainingSeconds}s` : 'Check now'}
+                            </button>
+                        )}
+                        {state.canResume && (
+                            <button className="approval-secondary-button" onClick={() => vscode.postMessage({ command: 'queryApprovalResumeChecking' })}>
+                                Resume auto-check
+                            </button>
+                        )}
+                        {state.canRequestApproval && (
+                            <button onClick={() => vscode.postMessage({ command: 'queryApprovalRequestApproval' })}>
+                                {state.status === 'expired' ? 'Request approval again' : 'Request approval'}
+                            </button>
+                        )}
+                        {state.canRunApprovedQuery && (
+                            <button onClick={() => vscode.postMessage({ command: 'queryApprovalRunApproved' })}>
+                                Run approved query
+                            </button>
+                        )}
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -1215,7 +1395,8 @@ const App = () => {
     const [activeTab, setActiveTab] = useState<'results' | 'charts'>('results');
     const [gridData, setGridData] = useState<GridData | null>(null);
     const [scriptData, setScriptData] = useState<ScriptExecutionResultData | null>(null);
-    const activeChartData = scriptData?.lastTabularResult ?? gridData;
+    const [queryApprovalState, setQueryApprovalState] = useState<QueryApprovalState | null>(null);
+    const activeChartData = queryApprovalState ? null : (scriptData?.lastTabularResult ?? gridData);
     const [allowCsvExport, setAllowCsvExport] = useState<boolean>(true);
     const [erdData, setErdData] = useState<{ nodes: Node[], edges: Edge[], graphSignature?: string, layout?: any, connectionName?: string }>({ nodes: [], edges: [] });
     const [chartConfig, setChartConfig] = useState<any>(null);
@@ -1238,6 +1419,7 @@ const App = () => {
                 case 'updateResults':
                     setGridData(message.data);
                     setScriptData(null);
+                    setQueryApprovalState(null);
                     setActiveTab('results');
                     setSavePreview(null);
                     setSaveExecuting(false);
@@ -1245,6 +1427,15 @@ const App = () => {
                 case 'updateScriptResults':
                     setScriptData(message.data);
                     setGridData(null);
+                    setQueryApprovalState(null);
+                    setActiveTab('results');
+                    setSavePreview(null);
+                    setSaveExecuting(false);
+                    break;
+                case 'updateQueryApproval':
+                    setQueryApprovalState(message.data);
+                    setGridData(null);
+                    setScriptData(null);
                     setActiveTab('results');
                     setSavePreview(null);
                     setSaveExecuting(false);
@@ -1252,6 +1443,7 @@ const App = () => {
                 case 'clearResults':
                     setGridData(null);
                     setScriptData(null);
+                    setQueryApprovalState(null);
                     setSavePreview(null);
                     setSaveExecuting(false);
                     break;
@@ -1436,8 +1628,9 @@ const App = () => {
                 <button className={`tab ${activeTheme === myThemeLight ? 'light-tab' : ''} ${activeTab === 'charts' ? 'active' : ''}`} onClick={() => setActiveTab('charts')}>Charts</button>
             </div>
             <div className="content">
-                {activeTab === 'results' && scriptData && <ScriptResultsView data={scriptData} theme={activeTheme} allowCsvExport={allowCsvExport} onOpenChartBuilder={() => setActiveTab('charts')} />}
-                {activeTab === 'results' && !scriptData && <ResultsTab data={gridData} theme={activeTheme} onOpenChartBuilder={() => setActiveTab('charts')} allowCsvExport={allowCsvExport} />}
+                {activeTab === 'results' && queryApprovalState && <QueryApprovalView state={queryApprovalState} />}
+                {activeTab === 'results' && !queryApprovalState && scriptData && <ScriptResultsView data={scriptData} theme={activeTheme} allowCsvExport={allowCsvExport} onOpenChartBuilder={() => setActiveTab('charts')} />}
+                {activeTab === 'results' && !queryApprovalState && !scriptData && <ResultsTab data={gridData} theme={activeTheme} onOpenChartBuilder={() => setActiveTab('charts')} allowCsvExport={allowCsvExport} />}
                 {activeTab === 'charts' && (
                     <ChartsTab
                         config={chartConfig}

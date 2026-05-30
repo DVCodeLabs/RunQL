@@ -87,6 +87,9 @@ export async function executeScript(
                 });
             }
         } catch (e: unknown) {
+            if (isApprovalRequiredError(e)) {
+                throw e;
+            }
             const elapsedMs = Date.now() - startTime;
             executedCount++;
             failedAtIndex = index;
@@ -109,4 +112,9 @@ export async function executeScript(
         statements: statementResults,
         lastTabularResult,
     };
+}
+
+function isApprovalRequiredError(error: unknown): boolean {
+    const candidate = error as { name?: string; statusCode?: number } | undefined;
+    return candidate?.name === 'SecureQLApprovalRequiredError' && candidate.statusCode === 202;
 }

@@ -15,6 +15,21 @@ export type DbDialect =
 
 export type ConnectionType = 'data_access' | 'db_admin';
 
+export interface SecureQLKeyInfo {
+    connection_id: number;
+    connection_name: string;
+    dbms: string;
+    database_name: string | null;
+    connection_type?: ConnectionType;
+    allow_csv_export: boolean;
+    connection_account_id?: number;
+    user_id?: number;
+    query_approval?: {
+        enabled: boolean;
+        required_command_tags: string[];
+    };
+}
+
 export interface DPProviderDescriptor {
     providerId: string;
     displayName: string;
@@ -153,6 +168,8 @@ export interface ConnectionProfile {
     secureqlBaseUrl?: string;
     secureqlConnectionId?: string;
     secureqlTargetDbms?: string;
+    secureqlQueryApprovalEnabled?: boolean;
+    secureqlQueryApprovalRequiredCommandTags?: string[];
 
     // Optional extras:
     warehouse?: string;         // snowflake/databricks
@@ -195,6 +212,8 @@ export interface ConnectionSecrets {
 export interface QueryRunOptions {
     maxRows: number;            // default 10000
     timeoutMs?: number;
+    approvalRequestId?: string | number;
+    secureqlKeyInfo?: SecureQLKeyInfo;
 }
 
 export interface QueryColumn {
@@ -210,6 +229,43 @@ export interface QueryResult {
     elapsedMs: number;
     warning?: string;
     meta?: QueryResultMeta;
+}
+
+export type QueryApprovalViewStatus =
+    | 'approval_required'
+    | 'pending'
+    | 'approved'
+    | 'expired'
+    | 'executing'
+    | 'executed'
+    | 'denied'
+    | 'cancelled'
+    | 'execution_failed'
+    | 'polling_failed'
+    | 'polling_stopped';
+
+export interface QueryApprovalViewState {
+    requestId?: string;
+    status: QueryApprovalViewStatus;
+    message: string;
+    submittedAt?: string;
+    connectionName?: string;
+    primaryCommandTag?: string;
+    reviewerDisplayName?: string;
+    reviewedAt?: string;
+    approvalExpiresAt?: string;
+    denialReason?: string;
+    executionStartedAt?: string;
+    executionCompletedAt?: string;
+    runtimeMs?: number;
+    executionErrorMessage?: string;
+    nextCheckAt?: string;
+    manualCheckAvailableAt?: string;
+    canStop: boolean;
+    canCheckStatus: boolean;
+    canResume: boolean;
+    canRequestApproval?: boolean;
+    canRunApprovedQuery?: boolean;
 }
 
 export interface QueryResultSource {

@@ -31,6 +31,7 @@ import { normalizeConnectionType, normalizeProfileConnectionType } from '../conn
 async function resolveAndBuildRequestOptions(
     profile: ConnectionProfile,
     secrets: ConnectionSecrets,
+    keyInfo = undefined as QueryRunOptions['secureqlKeyInfo'],
 ): Promise<SecureQLRequestOptions> {
     const baseUrl = profile.secureqlBaseUrl;
     const apiKey = secrets.apiKey;
@@ -38,8 +39,9 @@ async function resolveAndBuildRequestOptions(
     if (!baseUrl) throw new Error('SecureQL Base URL is required.');
     if (!apiKey) throw new Error('API key is required.');
 
-    // Always call /v1/key/me to refresh server-controlled flags
-    const info = await getKeyInfo(baseUrl, apiKey);
+    // Always refresh server-controlled flags unless the caller already did it
+    // for this operation.
+    const info = keyInfo ?? await getKeyInfo(baseUrl, apiKey);
 
     // Auto-resolve connection ID if not yet set
     if (!profile.secureqlConnectionId) {
@@ -55,6 +57,8 @@ async function resolveAndBuildRequestOptions(
     // Always sync server-side SecureQL metadata
     profile.connectionType = normalizeConnectionType(info.connection_type);
     profile.allowCsvExport = info.allow_csv_export;
+    profile.secureqlQueryApprovalEnabled = info.query_approval?.enabled ?? false;
+    profile.secureqlQueryApprovalRequiredCommandTags = info.query_approval?.required_command_tags ?? [];
     normalizeProfileConnectionType(profile);
 
     return { baseUrl, apiKey, connectionId: profile.secureqlConnectionId };
@@ -246,7 +250,12 @@ interface SecureQLQueryReturn {
     [key: string]: unknown;
 }
 
-function mapQueryResponse(raw: any): QueryResult {
+type IndexedQueryColumn = {
+    column: QueryColumn;
+    sourceIndex: number;
+};
+
+export function mapQueryResponse(raw: any): QueryResult {
     const results: SecureQLQueryReturn[] = raw?.results ?? [];
     const log = raw?.log;
     const clientStart = Date.now();
@@ -260,18 +269,18 @@ function mapQueryResponse(raw: any): QueryResult {
 
     // Find first tabular result (has rows array + fields)
     const tabular = results.find(
-        (r) => Array.isArray(r.rows) && Array.isArray(r.fields),
+        (r) => Array.isArray(r.rows) && (Array.isArray(r.fields) || Array.isArray((r as any).columns)),
     );
 
     let warning: string | undefined;
     if (results.length > 1) {
-        const tabularCount = results.filter((r) => Array.isArray(r.rows) && Array.isArray(r.fields)).length;
+        const tabularCount = results.filter((r) => Array.isArray(r.rows) && (Array.isArray(r.fields) || Array.isArray((r as any).columns))).length;
         if (tabularCount > 1) {
             warning = `Query returned ${tabularCount} result sets. Only the first tabular result is displayed.`;
         }
     }
 
-    if (!tabular || !Array.isArray(tabular.rows) || !Array.isArray(tabular.fields)) {
+    if (!tabular || !Array.isArray(tabular.rows) || (!Array.isArray(tabular.fields) && !Array.isArray((tabular as any).columns))) {
         // DML or empty result
         const affected = results.reduce((sum, r) => sum + (r.affectedRows || 0), 0);
         return {
@@ -283,13 +292,29 @@ function mapQueryResponse(raw: any): QueryResult {
         };
     }
 
-    const columns: QueryColumn[] = tabular.fields.map((f) => ({
-        name: f.field,
-        type: f.colType,
-    }));
+    const rawColumns: QueryColumn[] = Array.isArray(tabular.fields)
+        ? tabular.fields.map((f) => ({ name: f.field, type: f.colType }))
+        : ((tabular as any).columns ?? []).map((column: any) => (
+            typeof column === 'string'
+                ? { name: column, type: undefined }
+                : { name: column.name ?? column.field, type: column.type ?? column.colType }
+        ));
+
+    const indexedColumns: IndexedQueryColumn[] = rawColumns
+        .map((column: QueryColumn, sourceIndex: number) => ({ column, sourceIndex }))
+        .filter(({ column }) => Boolean(column.name));
+    const columns: QueryColumn[] = indexedColumns.map(({ column }) => column);
 
     // Keep rows as objects keyed by column name — AG Grid in runQL expects this format
-    const objectRows = tabular.rows as Record<string, unknown>[];
+    const objectRows = (tabular.rows as unknown[]).map((row) => {
+        if (!Array.isArray(row)) {
+            return row as Record<string, unknown>;
+        }
+        return indexedColumns.reduce<Record<string, unknown>>((acc, { column, sourceIndex }) => {
+            acc[column.name] = row[sourceIndex];
+            return acc;
+        }, {});
+    });
 
     const elapsedMs = tabular.runtime ?? log?.runtime_ms ?? (Date.now() - clientStart);
 
@@ -337,11 +362,11 @@ export class SecureQLAdapter implements DbAdapter {
         profile: ConnectionProfile,
         secrets: ConnectionSecrets,
         sql: string,
-        _options: QueryRunOptions,
+        options: QueryRunOptions,
     ): Promise<QueryResult> {
-        const opts = await resolveAndBuildRequestOptions(profile, secrets);
+        const opts = await resolveAndBuildRequestOptions(profile, secrets, options.secureqlKeyInfo);
         this.persistProfile(profile);
-        const raw = await executeQuery(opts, sql);
+        const raw = await executeQuery(opts, sql, options.approvalRequestId);
         return mapQueryResponse(raw);
     }
 

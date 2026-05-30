@@ -31,9 +31,11 @@ import {
   ConnectionProfile,
   ConnectionSecrets,
   DbDialect,
+  QueryApprovalViewState,
   QueryColumn,
   QueryResultMeta,
   QueryResultSource,
+  SecureQLKeyInfo,
   ApplyResultsetEditsRequest,
   ApplyResultsetEditsResult,
   ResultsetRowEdit,
@@ -59,6 +61,14 @@ import { updateProjectInitializedContext, isProjectInitialized } from './core/is
 import { WelcomeView } from './ui/welcomeView';
 import { CreateTableView, CreateTablePanelContext, CreateTableResultPayload } from './ui/createTableView';
 import { buildCreateTableSql, buildAlterTableSql, buildDropTableSql, CreateTableDraft } from './core/createTableSql';
+import {
+  getKeyInfo,
+  getQueryApprovalRequest,
+  createQueryApprovalRequest,
+  SecureQLApprovalRequiredError,
+  SecureQLApprovalRequestResponse,
+  SecureQLRequestOptions
+} from './connections/adapters/secureqlClient';
 
 type ApplyResultsetEditsCommandPayload = ApplyResultsetEditsRequest & {
   confirmed?: boolean;
@@ -288,6 +298,708 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
 
     return base;
   };
+
+  type QueryApprovalPoller = {
+    docUri: vscode.Uri;
+    opts: SecureQLRequestOptions;
+    profile: ConnectionProfile;
+    secrets: ConnectionSecrets;
+    userSql: string;
+    selection?: vscode.Range;
+    requestId: string;
+    startedAt: number;
+    consecutiveFailures: number;
+    timer?: NodeJS.Timeout;
+    stopped: boolean;
+  };
+
+  const approvalPollersByDocUri = new Map<string, QueryApprovalPoller>();
+
+  const isApprovalRequiredError = (error: unknown): error is SecureQLApprovalRequiredError => {
+    const candidate = error as SecureQLApprovalRequiredError | undefined;
+    return Boolean(
+      candidate
+      && candidate.statusCode === 202
+      && candidate.name === 'SecureQLApprovalRequiredError'
+      && candidate.approval?.request_id !== undefined
+      && candidate.approval?.request_id !== null
+    );
+  };
+
+  const isServerNoApprovalRequiredError = (error: unknown): boolean => {
+    const candidate = error as { statusCode?: number; message?: string; userMessage?: string; serverMessage?: string } | undefined;
+    if (candidate?.statusCode !== 400) {
+      return false;
+    }
+    return [candidate.message, candidate.userMessage, candidate.serverMessage].some((message) =>
+      typeof message === 'string' && message.includes('This query does not require approval'),
+    );
+  };
+
+  const toApprovalViewStatus = (status: string): QueryApprovalViewState['status'] => {
+    switch (status) {
+      case 'approval_required':
+        return 'approval_required';
+      case 'Pending':
+        return 'pending';
+      case 'Approved':
+        return 'approved';
+      case 'Executing':
+        return 'executing';
+      case 'Executed':
+        return 'executed';
+      case 'Expired':
+        return 'expired';
+      case 'Denied':
+        return 'denied';
+      case 'Cancelled':
+        return 'cancelled';
+      case 'Execution Failed':
+        return 'execution_failed';
+      default:
+        return 'polling_failed';
+    }
+  };
+
+  const isTerminalApprovalStatus = (status: string): boolean => {
+    return status === 'Executed'
+      || status === 'Denied'
+      || status === 'Cancelled'
+      || status === 'Execution Failed';
+  };
+
+  const buildApprovalViewState = (
+    response: SecureQLApprovalRequestResponse,
+    overrides: Partial<QueryApprovalViewState> = {},
+  ): QueryApprovalViewState => {
+    const status = overrides.status ?? toApprovalViewStatus(response.status);
+    const terminal = isTerminalApprovalStatus(response.status);
+    return {
+      requestId: String(response.request_id),
+      status,
+      message: response.message || 'This query requires approval before execution. Approval has been requested.',
+      submittedAt: response.submitted_at,
+      connectionName: response.connection_name,
+      primaryCommandTag: response.primary_command_tag,
+      reviewerDisplayName: response.reviewer_display_name,
+      reviewedAt: response.reviewed_at,
+      approvalExpiresAt: response.approval_expires_at,
+      denialReason: response.denial_reason,
+      executionStartedAt: response.execution_started_at,
+      executionCompletedAt: response.execution_completed_at,
+      runtimeMs: response.runtime_ms,
+      executionErrorMessage: response.execution_error_message,
+      nextCheckAt: overrides.nextCheckAt,
+      manualCheckAvailableAt: overrides.manualCheckAvailableAt,
+      canStop: !terminal && status !== 'polling_stopped',
+      canCheckStatus: status === 'polling_stopped' || status === 'polling_failed',
+      canResume: status === 'polling_stopped' || status === 'polling_failed',
+      ...overrides,
+    };
+  };
+
+  const postApprovalState = (docUri: vscode.Uri, state: QueryApprovalViewState) => {
+    resultsViewProvider.show(docUri);
+    resultsViewProvider.postMessage(docUri, 'updateQueryApproval', state);
+  };
+
+  const approvalCommandTagForSql = (sql: string): string | undefined => {
+    const cleaned = sql
+      .replace(/^\s*(?:--[^\n]*\n\s*)+/g, '')
+      .replace(/^\s*(?:\/\*[\s\S]*?\*\/\s*)+/g, '')
+      .trim();
+    const match = cleaned.match(/^(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE)\b/i);
+    return match?.[1]?.toUpperCase();
+  };
+
+  const secureQLApprovalRequiredForSql = (profile: ConnectionProfile, sql: string): boolean => {
+    if (profile.dialect !== 'secureql' || !profile.secureqlQueryApprovalEnabled) {
+      return false;
+    }
+    const required = new Set((profile.secureqlQueryApprovalRequiredCommandTags ?? []).map((tag) => tag.toUpperCase()));
+    if (required.size === 0) {
+      return false;
+    }
+    const { splitStatements } = require('./core/sqlSplitter');
+    return splitStatements(sql).some((statement: { sql: string }) => {
+      const tag = approvalCommandTagForSql(statement.sql);
+      return !!tag && required.has(tag);
+    });
+  };
+
+  const refreshSecureQLApprovalPolicyForRun = async (
+    profile: ConnectionProfile,
+    secrets: ConnectionSecrets,
+  ): Promise<SecureQLKeyInfo | undefined> => {
+    if (profile.dialect !== 'secureql' || !profile.secureqlBaseUrl || !secrets.apiKey) {
+      return undefined;
+    }
+
+    try {
+      const info = await getKeyInfo(profile.secureqlBaseUrl, secrets.apiKey);
+      const requiredTags = info.query_approval?.required_command_tags ?? [];
+      let changed = false;
+
+      const setIfChanged = <K extends keyof ConnectionProfile>(key: K, value: ConnectionProfile[K]) => {
+        if (profile[key] !== value) {
+          profile[key] = value;
+          changed = true;
+        }
+      };
+
+      setIfChanged('secureqlConnectionId', String(info.connection_id));
+      setIfChanged('secureqlTargetDbms', info.dbms);
+      setIfChanged('sqlDialect', info.dbms as DbDialect);
+      setIfChanged('allowCsvExport', info.allow_csv_export);
+      setIfChanged('secureqlQueryApprovalEnabled', info.query_approval?.enabled ?? false);
+
+      if (JSON.stringify(profile.secureqlQueryApprovalRequiredCommandTags ?? []) !== JSON.stringify(requiredTags)) {
+        profile.secureqlQueryApprovalRequiredCommandTags = requiredTags;
+        changed = true;
+      }
+
+      if (changed) {
+        await saveConnectionProfile(profile);
+      }
+      return info;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      Logger.debug(`SecureQL approval policy refresh skipped for connection ${profile.id}: ${message}`);
+      return undefined;
+    }
+  };
+
+  const getCurrentApprovalSql = (poller: QueryApprovalPoller): string => {
+    const doc = vscode.workspace.textDocuments.find((document) => document.uri.toString() === poller.docUri.toString());
+    if (!doc) {
+      return poller.userSql;
+    }
+    return poller.selection ? doc.getText(poller.selection) : doc.getText();
+  };
+
+  const clearApprovalTimer = (poller: QueryApprovalPoller) => {
+    if (poller.timer) {
+      clearTimeout(poller.timer);
+      poller.timer = undefined;
+    }
+  };
+
+  const removeApprovalPoller = (docUri: vscode.Uri) => {
+    const key = docUri.toString();
+    const existing = approvalPollersByDocUri.get(key);
+    if (existing) {
+      clearApprovalTimer(existing);
+      approvalPollersByDocUri.delete(key);
+    }
+  };
+
+  const getSchemaNameForHistory = (profile: ConnectionProfile, sql: string): string => {
+    if (profile.database) {
+      return profile.database;
+    }
+    const identifier = String.raw`(?:"([^"]+)"|` + "`([^`]+)`" + String.raw`|\[([^\]]+)\]|([a-zA-Z_][a-zA-Z0-9_$]*))`;
+    const schemaMatch = sql.match(
+      new RegExp(String.raw`\b(?:FROM|JOIN|INTO|UPDATE|TABLE|VIEW|INDEX|SEQUENCE|TRUNCATE)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?${identifier}\s*\.`, 'i'),
+    );
+    const matchedSchema = schemaMatch?.slice(1).find((part) => part !== undefined);
+    if (matchedSchema) {
+      return matchedSchema;
+    }
+    return context.workspaceState.get<string>("runql.activeSchemaName") || 'main';
+  };
+
+  const addQueryHistoryEntry = (
+    profile: ConnectionProfile,
+    sql: string,
+    status: 'success' | 'error',
+    rows?: number,
+    duration?: number,
+  ) => {
+    const { HistoryService } = require('./services/historyService');
+    HistoryService.getInstance().addEntry({
+      query: sql,
+      connectionName: profile.name,
+      schemaName: getSchemaNameForHistory(profile, sql),
+      connectionId: profile.id,
+      status,
+      rows,
+      duration,
+    });
+  };
+
+  const runSqlWithoutApproval = async (
+    docUri: vscode.Uri,
+    profile: ConnectionProfile,
+    secrets: ConnectionSecrets,
+    sql: string,
+    bypassLimit = false,
+  ) => {
+    const adapter = getAdapter(profile.dialect);
+    const config = vscode.workspace.getConfiguration('runql');
+    const maxRowsLimit = bypassLimit ? 0 : config.get<number>('query.maxRowsLimit', 10000);
+    const { splitStatements } = require('./core/sqlSplitter');
+    const statements = splitStatements(sql);
+
+    removeApprovalPoller(docUri);
+    resultsViewProvider.show(docUri);
+
+    if (statements.length > 1) {
+      const { executeScript } = require('./core/scriptRunner');
+      const scriptResult: ScriptExecutionResult = await executeScript(statements, adapter, profile, secrets, {
+        maxRows: maxRowsLimit,
+        bypassLimit,
+      });
+
+      lastRunContextByDocUri.set(docUri.toString(), {
+        refreshSql: sql,
+        userSql: sql,
+      });
+      resultsViewProvider.postMessage(docUri, 'setAllowCsvExport', profile.allowCsvExport ?? true);
+      resultsViewProvider.postMessage(docUri, 'updateScriptResults', scriptResult);
+      await queryIndex.updateLastRun(docUri);
+      addQueryHistoryEntry(
+        profile,
+        sql,
+        scriptResult.failedAtIndex ? 'error' : 'success',
+        scriptResult.lastTabularResult?.rows?.length,
+        scriptResult.statements.reduce((sum, statement) => sum + (statement.elapsedMs || 0), 0),
+      );
+
+      const anyDDL = scriptResult.statements.some(
+        (statement) => statement.status === 'success' && checkForDDL(statement.sql),
+      );
+      if (anyDDL) {
+        vscode.commands.executeCommand("runql.view.refreshSchemas");
+      }
+      if (scriptResult.failedAtIndex) {
+        const failedStmt = scriptResult.statements.find((statement) => statement.status === 'error');
+        vscode.window.showErrorMessage(
+          `Statement ${scriptResult.failedAtIndex} failed: ${failedStmt?.errorMessage || 'Unknown error'}`,
+        );
+      }
+      return;
+    }
+
+    const { applyRowLimit } = require('./core/sqlLimitHelper');
+    const limitResult = applyRowLimit(sql, maxRowsLimit);
+    lastRunContextByDocUri.set(docUri.toString(), {
+      refreshSql: limitResult.sql,
+      userSql: sql,
+    });
+
+    const results = await adapter.runQuery(profile, secrets, limitResult.sql, { maxRows: limitResult.effectiveLimit });
+    results.meta = await buildResultMeta(profile, docUri, sql, results.columns);
+    resultsViewProvider.postMessage(docUri, 'setAllowCsvExport', profile.allowCsvExport ?? true);
+    resultsViewProvider.postMessage(docUri, 'updateResults', results);
+    await queryIndex.updateLastRun(docUri);
+    addQueryHistoryEntry(profile, sql, 'success', results.rows?.length, results.elapsedMs);
+
+    if (limitResult.clamped) {
+      vscode.window.showInformationMessage(
+        `Query LIMIT was capped to ${maxRowsLimit} rows. Use "Run (no LIMIT)" to bypass.`,
+      );
+    }
+    if (checkForDDL(sql)) {
+      vscode.commands.executeCommand("runql.view.refreshSchemas");
+    }
+  };
+
+  const getApprovalPollDelay = (poller: QueryApprovalPoller): number | null => {
+    const elapsed = Date.now() - poller.startedAt;
+    if (elapsed >= 30 * 60 * 1000) {
+      return null;
+    }
+    return elapsed < 2 * 60 * 1000 ? 5000 : 15000;
+  };
+
+  const scheduleApprovalPoll = (poller: QueryApprovalPoller, delay?: number) => {
+    clearApprovalTimer(poller);
+    if (poller.stopped) {
+      return;
+    }
+    const pollDelay = delay ?? getApprovalPollDelay(poller);
+    if (pollDelay === null) {
+      poller.stopped = true;
+      postApprovalState(poller.docUri, {
+        requestId: poller.requestId,
+        status: 'polling_stopped',
+        message: 'Automatic checking stopped after 30 minutes. The approval request remains active in SecureQL.',
+        canStop: false,
+        canCheckStatus: true,
+        canResume: true,
+      });
+      return;
+    }
+    poller.timer = setTimeout(() => {
+      pollApprovalRequest(poller, { automatic: true }).catch((error) => {
+        handleApprovalPollFailure(poller, error, true);
+      });
+    }, pollDelay);
+  };
+
+  const pollApprovalRequest = async (
+    poller: QueryApprovalPoller,
+    options: { automatic: boolean },
+  ) => {
+    clearApprovalTimer(poller);
+    const response = await getQueryApprovalRequest(poller.opts, poller.requestId);
+    poller.consecutiveFailures = 0;
+
+    if (response.status === 'Executed') {
+      removeApprovalPoller(poller.docUri);
+      postApprovalState(poller.docUri, buildApprovalViewState(response, {
+        message: response.message || 'Approved query has already been run.',
+        canStop: false,
+        canCheckStatus: false,
+        canResume: false,
+      }));
+      if (options.automatic) {
+        vscode.window.showInformationMessage('Approved query has already been run.');
+      }
+      return;
+    }
+
+    if (response.status === 'Approved') {
+      clearApprovalTimer(poller);
+      poller.stopped = true;
+      postApprovalState(poller.docUri, buildApprovalViewState(response, {
+        message: response.message || 'This query was approved. Run it within 30 minutes.',
+        canStop: false,
+        canCheckStatus: false,
+        canResume: false,
+        canRunApprovedQuery: true,
+      }));
+      if (automatic) {
+        vscode.window.showInformationMessage('Query approved. Run it from the Results panel.');
+      }
+      return;
+    }
+
+    if (response.status === 'Expired') {
+      clearApprovalTimer(poller);
+      poller.stopped = true;
+      postApprovalState(poller.docUri, buildApprovalViewState(response, {
+        status: 'expired',
+        message: 'This approval expired. Request approval again for this query.',
+        canStop: false,
+        canCheckStatus: false,
+        canResume: false,
+        canRequestApproval: true,
+      }));
+      return;
+    }
+
+    if (response.status === 'Execution Failed') {
+      removeApprovalPoller(poller.docUri);
+      postApprovalState(poller.docUri, buildApprovalViewState(response, {
+        canStop: false,
+        canCheckStatus: false,
+        canResume: false,
+      }));
+      addQueryHistoryEntry(poller.profile, poller.userSql, 'error', undefined, response.runtime_ms);
+      vscode.window.showErrorMessage(`Approved query failed during execution: ${response.execution_error_message || response.message || 'Unknown error'}`);
+      return;
+    }
+
+    if (response.status === 'Denied' || response.status === 'Cancelled') {
+      removeApprovalPoller(poller.docUri);
+      postApprovalState(poller.docUri, buildApprovalViewState(response, {
+        canStop: false,
+        canCheckStatus: false,
+        canResume: false,
+      }));
+      vscode.window.showWarningMessage(response.status === 'Denied' ? 'Query approval denied.' : 'Query approval cancelled.');
+      return;
+    }
+
+    if (response.status !== 'Pending' && response.status !== 'Executing') {
+      poller.stopped = true;
+      postApprovalState(poller.docUri, buildApprovalViewState(response, {
+        status: 'polling_failed',
+        message: `Unsupported approval status: ${response.status}`,
+        canStop: false,
+        canCheckStatus: true,
+        canResume: false,
+      }));
+      return;
+    }
+
+    const nextDelay = options.automatic ? getApprovalPollDelay(poller) : null;
+    postApprovalState(poller.docUri, buildApprovalViewState(response, {
+      canStop: options.automatic,
+      canCheckStatus: !options.automatic,
+      canResume: !options.automatic,
+      nextCheckAt: nextDelay === null ? undefined : new Date(Date.now() + nextDelay).toISOString(),
+      manualCheckAvailableAt: options.automatic ? undefined : new Date(Date.now() + 5000).toISOString(),
+    }));
+    if (options.automatic) {
+      scheduleApprovalPoll(poller, nextDelay ?? undefined);
+    }
+  };
+
+  const handleApprovalPollFailure = (
+    poller: QueryApprovalPoller,
+    error: unknown,
+    automatic: boolean,
+  ) => {
+    poller.consecutiveFailures += 1;
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode = (error as { statusCode?: number } | undefined)?.statusCode;
+    const shouldStop = statusCode === 401
+      || statusCode === 403
+      || statusCode === 404
+      || poller.consecutiveFailures >= 6
+      || !automatic;
+
+    if (shouldStop) {
+      poller.stopped = true;
+      postApprovalState(poller.docUri, {
+        requestId: poller.requestId,
+        status: 'polling_failed',
+        message: statusCode === 401 || statusCode === 403
+          ? `Could not continue checking approval status: ${message}`
+          : 'Could not continue checking approval status. The approval request remains active in SecureQL.',
+        canStop: false,
+        canCheckStatus: true,
+        canResume: statusCode !== 401 && statusCode !== 403 && statusCode !== 404,
+      });
+      return;
+    }
+
+    if (poller.consecutiveFailures >= 3) {
+      const nextDelay = getApprovalPollDelay(poller);
+      postApprovalState(poller.docUri, {
+        requestId: poller.requestId,
+        status: 'polling_failed',
+        message: `Still checking approval status, but the last ${poller.consecutiveFailures} checks failed: ${message}`,
+        canStop: true,
+        canCheckStatus: false,
+        canResume: false,
+        nextCheckAt: nextDelay === null ? undefined : new Date(Date.now() + nextDelay).toISOString(),
+      });
+    }
+    scheduleApprovalPoll(poller);
+  };
+
+  const startApprovalPolling = (
+    docUri: vscode.Uri,
+    profile: ConnectionProfile,
+    secrets: ConnectionSecrets,
+    userSql: string,
+    error: SecureQLApprovalRequiredError,
+  ) => {
+    if (!profile.secureqlBaseUrl || !profile.secureqlConnectionId || !secrets.apiKey) {
+      vscode.window.showErrorMessage('Submitted for approval, but RunQL could not start status checking because SecureQL connection metadata is incomplete.');
+      return;
+    }
+
+    removeApprovalPoller(docUri);
+
+    const poller: QueryApprovalPoller = {
+      docUri,
+      opts: {
+        baseUrl: profile.secureqlBaseUrl,
+        apiKey: secrets.apiKey,
+        connectionId: profile.secureqlConnectionId,
+      },
+      profile,
+      secrets,
+      userSql,
+      requestId: String(error.approval.request_id),
+      startedAt: Date.now(),
+      consecutiveFailures: 0,
+      stopped: false,
+    };
+    approvalPollersByDocUri.set(docUri.toString(), poller);
+
+    vscode.window.showInformationMessage('Submitted for approval: This query requires approval before execution and approval has been requested.');
+    postApprovalState(docUri, {
+      requestId: String(error.approval.request_id),
+      status: 'approval_required',
+      message: 'This query requires approval before execution. Approval has been requested.',
+      submittedAt: error.approval.submitted_at,
+      connectionName: error.approval.connection_name ?? profile.name,
+      primaryCommandTag: error.approval.primary_command_tag,
+      canStop: true,
+      canCheckStatus: false,
+      canResume: false,
+    });
+
+    pollApprovalRequest(poller, { automatic: true }).catch((pollError) => {
+      handleApprovalPollFailure(poller, pollError, true);
+    });
+  };
+
+  const showApprovalRequiredForSql = (
+    docUri: vscode.Uri,
+    profile: ConnectionProfile,
+    secrets: ConnectionSecrets,
+    userSql: string,
+    selection?: vscode.Range,
+  ) => {
+    if (!profile.secureqlBaseUrl || !profile.secureqlConnectionId || !secrets.apiKey) {
+      vscode.window.showErrorMessage('This query requires approval, but SecureQL connection metadata is incomplete.');
+      return;
+    }
+    removeApprovalPoller(docUri);
+    const poller: QueryApprovalPoller = {
+      docUri,
+      opts: {
+        baseUrl: profile.secureqlBaseUrl,
+        apiKey: secrets.apiKey,
+        connectionId: profile.secureqlConnectionId,
+      },
+      profile,
+      secrets,
+      userSql,
+      selection,
+      requestId: '',
+      startedAt: Date.now(),
+      consecutiveFailures: 0,
+      stopped: true,
+    };
+    approvalPollersByDocUri.set(docUri.toString(), poller);
+    postApprovalState(docUri, {
+      status: 'approval_required',
+      message: 'This query must be approved before it can run.',
+      connectionName: profile.name,
+      primaryCommandTag: approvalCommandTagForSql(userSql),
+      canStop: false,
+      canCheckStatus: false,
+      canResume: false,
+      canRequestApproval: true,
+    });
+  };
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('runql.queryApproval.requestApproval', async (docUri: vscode.Uri) => {
+      const poller = approvalPollersByDocUri.get(docUri.toString());
+      if (!poller) {
+        return;
+      }
+      try {
+        const response = await createQueryApprovalRequest(poller.opts, getCurrentApprovalSql(poller));
+        poller.requestId = String(response.request_id);
+        poller.startedAt = Date.now();
+        poller.stopped = false;
+        poller.consecutiveFailures = 0;
+        postApprovalState(docUri, buildApprovalViewState(response, {
+          message: response.message || 'This query has been submitted for approval. Keep this tab open to continue automatically when it is approved.',
+          canStop: true,
+          canCheckStatus: false,
+          canResume: false,
+        }));
+        vscode.window.showInformationMessage('Submitted for approval.');
+        await pollApprovalRequest(poller, { automatic: true }).catch((error) => {
+          handleApprovalPollFailure(poller, error, true);
+        });
+      } catch (error) {
+        if (isServerNoApprovalRequiredError(error)) {
+          const sql = getCurrentApprovalSql(poller);
+          try {
+            await runSqlWithoutApproval(docUri, poller.profile, poller.secrets, sql);
+            vscode.window.showInformationMessage('SecureQL did not require approval, so the query was run.');
+          } catch (runError) {
+            const message = runError instanceof Error ? runError.message : String(runError);
+            vscode.window.showErrorMessage(`Query failed: ${message}`);
+          }
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        postApprovalState(docUri, {
+          requestId: poller.requestId || undefined,
+          status: 'polling_failed',
+          message,
+          connectionName: poller.profile.name,
+          canStop: false,
+          canCheckStatus: false,
+          canResume: false,
+          canRequestApproval: true,
+        });
+      }
+    }),
+    vscode.commands.registerCommand('runql.queryApproval.runApproved', async (docUri: vscode.Uri) => {
+      const poller = approvalPollersByDocUri.get(docUri.toString());
+      if (!poller?.requestId) {
+        return;
+      }
+      try {
+        const adapter = getAdapter(poller.profile.dialect);
+        const sql = getCurrentApprovalSql(poller);
+        const results = await adapter.runQuery(poller.profile, poller.secrets, sql, {
+          maxRows: 0,
+          approvalRequestId: poller.requestId,
+        });
+        results.meta = await buildResultMeta(poller.profile, poller.docUri, sql, results.columns);
+        removeApprovalPoller(poller.docUri);
+        resultsViewProvider.show(poller.docUri);
+        resultsViewProvider.postMessage(poller.docUri, 'setAllowCsvExport', poller.profile.allowCsvExport ?? true);
+        resultsViewProvider.postMessage(poller.docUri, 'updateResults', results);
+        await queryIndex.updateLastRun(poller.docUri);
+        addQueryHistoryEntry(poller.profile, sql, 'success', results.rows?.length, results.elapsedMs);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        postApprovalState(docUri, {
+          requestId: poller.requestId,
+          status: 'approval_required',
+          message,
+          connectionName: poller.profile.name,
+          canStop: false,
+          canCheckStatus: false,
+          canResume: false,
+          canRequestApproval: true,
+        });
+        vscode.window.showErrorMessage(message);
+      }
+    }),
+    vscode.commands.registerCommand('runql.queryApproval.stopChecking', async (docUri: vscode.Uri) => {
+      const poller = approvalPollersByDocUri.get(docUri.toString());
+      if (!poller) {
+        return;
+      }
+      clearApprovalTimer(poller);
+      poller.stopped = true;
+      postApprovalState(docUri, {
+        requestId: poller.requestId,
+        status: 'polling_stopped',
+        message: 'Auto-checking is paused. Check now or resume auto-checking when you are ready.',
+        canStop: false,
+        canCheckStatus: true,
+        canResume: true,
+      });
+      vscode.window.showInformationMessage('Polling stopped. The approval request remains active in SecureQL.');
+    }),
+    vscode.commands.registerCommand('runql.queryApproval.checkStatus', async (docUri: vscode.Uri) => {
+      const poller = approvalPollersByDocUri.get(docUri.toString());
+      if (!poller) {
+        return;
+      }
+      clearApprovalTimer(poller);
+      await pollApprovalRequest(poller, { automatic: false }).catch((error) => {
+        handleApprovalPollFailure(poller, error, false);
+      });
+    }),
+    vscode.commands.registerCommand('runql.queryApproval.resumeChecking', async (docUri: vscode.Uri) => {
+      const poller = approvalPollersByDocUri.get(docUri.toString());
+      if (!poller) {
+        return;
+      }
+      poller.stopped = false;
+      poller.consecutiveFailures = 0;
+      poller.startedAt = Date.now();
+      postApprovalState(docUri, {
+        requestId: poller.requestId,
+        status: 'pending',
+        message: 'Auto-checking is on. You can run the query from here when it is approved.',
+        canStop: true,
+        canCheckStatus: false,
+        canResume: false,
+      });
+      await pollApprovalRequest(poller, { automatic: true }).catch((error) => {
+        handleApprovalPollFailure(poller, error, true);
+      });
+    })
+  );
 
   const resolveEditableSourceFromQuery = async (
     profile: ConnectionProfile,
@@ -985,6 +1697,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     // 3. Show Results Panel (loading state?)
     const docUri = editor.document.uri;
     resultsViewProvider.show(docUri);
+    removeApprovalPoller(docUri);
 
     // 4. Run Query (with interaction feedback)
     const { splitStatements } = require('./core/sqlSplitter');
@@ -998,14 +1711,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
         : `Running query on ${profile.name}...`,
       cancellable: true
     }, async (_progress, _token) => {
+      let secrets: ConnectionSecrets | undefined;
       try {
         const { ensureConnectionSecrets } = require('./connections/connectionCommands');
-        const secrets = await ensureConnectionSecrets(profile);
+        secrets = await ensureConnectionSecrets(profile);
         if (!secrets) return; // User cancelled
+
+        const secureqlKeyInfo = await refreshSecureQLApprovalPolicyForRun(profile, secrets);
 
         const adapter = getAdapter(profile.dialect);
         const config = vscode.workspace.getConfiguration('runql');
         const maxRowsLimit = bypassLimit ? 0 : config.get<number>('query.maxRowsLimit', 10000);
+
+        if (secureQLApprovalRequiredForSql(profile, text)) {
+          showApprovalRequiredForSql(
+            docUri,
+            profile,
+            secrets,
+            text,
+            selection.isEmpty ? undefined : new vscode.Range(selection.start, selection.end),
+          );
+          return;
+        }
 
         if (isScriptMode) {
           // ── Script mode: execute statements sequentially ──
@@ -1013,6 +1740,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
           const scriptResult: ScriptExecutionResult = await executeScript(statements, adapter, profile, secrets, {
             maxRows: maxRowsLimit,
             bypassLimit,
+            secureqlKeyInfo,
           });
 
           lastRunContextByDocUri.set(docUri.toString(), {
@@ -1036,22 +1764,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
           // Update Last Run
           await queryIndex.updateLastRun(docUri);
 
-          // History
-          const { HistoryService } = require('./services/historyService');
-          let schemaName = profile.database;
-          if (!schemaName) {
-            const schemaMatch = text.match(/(?:FROM|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_]*)\./i);
-            schemaName = schemaMatch ? schemaMatch[1] : context.workspaceState.get<string>("runql.activeSchemaName") || 'main';
-          }
-          HistoryService.getInstance().addEntry({
-            query: text,
-            connectionName: profile.name,
-            schemaName,
-            connectionId: profile.id,
-            status: scriptResult.failedAtIndex ? 'error' : 'success',
-            rows: scriptResult.lastTabularResult?.rows?.length,
-            duration: scriptResult.statements.reduce((sum, s) => sum + (s.elapsedMs || 0), 0)
-          });
+          addQueryHistoryEntry(
+            profile,
+            text,
+            scriptResult.failedAtIndex ? 'error' : 'success',
+            scriptResult.lastTabularResult?.rows?.length,
+            scriptResult.statements.reduce((sum, s) => sum + (s.elapsedMs || 0), 0),
+          );
 
           // DDL Auto-Refresh — check all executed statements
           const anyDDL = scriptResult.statements.some(
@@ -1069,7 +1788,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
             userSql: text
           });
 
-          const results = await adapter.runQuery(profile, secrets, limitResult.sql, { maxRows: limitResult.effectiveLimit });
+          const results = await adapter.runQuery(profile, secrets, limitResult.sql, {
+            maxRows: limitResult.effectiveLimit,
+            secureqlKeyInfo,
+          });
           results.meta = await buildResultMeta(profile, docUri, text, results.columns);
 
           // Show notice if user's limit was clamped
@@ -1088,22 +1810,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
           await queryIndex.updateLastRun(docUri);
 
           // MEMORY RECALL: Save to history
-          const { HistoryService } = require('./services/historyService');
-          let schemaName = profile.database;
-          if (!schemaName) {
-            const schemaMatch = text.match(/(?:FROM|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_]*)\./i);
-            schemaName = schemaMatch ? schemaMatch[1] : context.workspaceState.get<string>("runql.activeSchemaName") || 'main';
-          }
-
-          HistoryService.getInstance().addEntry({
-            query: text,
-            connectionName: profile.name,
-            schemaName,
-            connectionId: profile.id,
-            status: 'success',
-            rows: results.rows?.length,
-            duration: results.elapsedMs
-          });
+          addQueryHistoryEntry(profile, text, 'success', results.rows?.length, results.elapsedMs);
 
           // DDL Auto-Refresh
           if (checkForDDL(text)) {
@@ -1111,6 +1818,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
           }
         }
       } catch (e: unknown) {
+        if (isApprovalRequiredError(e) && secrets) {
+          startApprovalPolling(docUri, profile, secrets, text, e);
+          return;
+        }
         const msg = e instanceof Error ? e.message : String(e);
         vscode.window.showErrorMessage(`Query failed: ${msg}`);
       }

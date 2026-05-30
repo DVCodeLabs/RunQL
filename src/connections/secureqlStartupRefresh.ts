@@ -54,6 +54,15 @@ export async function refreshAllSecureQLProfiles(
                 profile.connectionType = connectionType;
                 changed = true;
             }
+            if (profile.secureqlQueryApprovalEnabled !== (info.query_approval?.enabled ?? false)) {
+                profile.secureqlQueryApprovalEnabled = info.query_approval?.enabled ?? false;
+                changed = true;
+            }
+            const requiredTags = info.query_approval?.required_command_tags ?? [];
+            if (JSON.stringify(profile.secureqlQueryApprovalRequiredCommandTags ?? []) !== JSON.stringify(requiredTags)) {
+                profile.secureqlQueryApprovalRequiredCommandTags = requiredTags;
+                changed = true;
+            }
 
             if (changed) {
                 await saveProfile(profile);

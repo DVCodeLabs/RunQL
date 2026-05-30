@@ -8,12 +8,21 @@ jest.mock('../adapters/secureqlClient', () => ({
             this.name = 'SecureQLApiError';
         }
     },
+    SecureQLApprovalRequiredError: class SecureQLApprovalRequiredError extends Error {
+        public statusCode = 202;
+        public userMessage: string;
+        constructor(public approval: { request_id: number; message: string }) {
+            super(approval.message);
+            this.name = 'SecureQLApprovalRequiredError';
+            this.userMessage = approval.message;
+        }
+    },
     normalizeBaseUrl: jest.fn((url: string) => url),
     mapSecureQLError: jest.fn(),
 }));
 
 import { SecureQLAdapter } from '../adapters/secureql';
-import { getKeyInfo, getSchema, executeQuery, SecureQLApiError } from '../adapters/secureqlClient';
+import { getKeyInfo, getSchema, executeQuery, SecureQLApprovalRequiredError } from '../adapters/secureqlClient';
 import { ConnectionProfile, ConnectionSecrets } from '../../core/types';
 
 const mockedGetKeyInfo = getKeyInfo as jest.MockedFunction<typeof getKeyInfo>;
@@ -139,6 +148,24 @@ describe('SecureQLAdapter', () => {
             expect(result.elapsedMs).toBe(10);
         });
 
+        it('reuses key info supplied by the run caller', async () => {
+            const adapter = new SecureQLAdapter();
+            const profile = makeProfile();
+            mockedGetKeyInfo.mockClear();
+
+            await adapter.runQuery(profile, TEST_SECRETS, 'SELECT 1', {
+                maxRows: 100,
+                secureqlKeyInfo: KEY_INFO_RESPONSE,
+            });
+
+            expect(mockedGetKeyInfo).not.toHaveBeenCalled();
+            expect(mockedExecuteQuery).toHaveBeenCalledWith(
+                expect.objectContaining({ connectionId: '123' }),
+                'SELECT 1',
+                undefined,
+            );
+        });
+
         it('maps a DML result', async () => {
             mockedExecuteQuery.mockResolvedValue({
                 results: [{ affectedRows: 5, queriesRun: 1 }],
@@ -178,6 +205,62 @@ describe('SecureQLAdapter', () => {
 
             expect(result.columns[0].name).toBe('a');
             expect(result.warning).toContain('2 result sets');
+        });
+
+        it('maps executed approval results with columns and array rows', async () => {
+            mockedExecuteQuery.mockResolvedValue({
+                results: [{
+                    affectedRows: 0,
+                    queriesRun: 1,
+                    columns: ['id', 'email'],
+                    rows: [[1, 'user@example.com']],
+                    runtime: 12,
+                }],
+                log: { runtime_ms: 12 },
+            });
+            const adapter = new SecureQLAdapter();
+            const profile = makeProfile();
+            const result = await adapter.runQuery(profile, TEST_SECRETS, 'SELECT id, email FROM users', { maxRows: 100 });
+
+            expect(result.columns).toEqual([{ name: 'id', type: undefined }, { name: 'email', type: undefined }]);
+            expect(result.rows).toEqual([{ id: 1, email: 'user@example.com' }]);
+            expect(result.rowCount).toBe(1);
+        });
+
+        it('keeps array row values aligned when columns include unnamed entries', async () => {
+            mockedExecuteQuery.mockResolvedValue({
+                results: [{
+                    affectedRows: 0,
+                    queriesRun: 1,
+                    columns: ['id', '', 'email'],
+                    rows: [[1, 'unnamed value', 'user@example.com']],
+                    runtime: 12,
+                }],
+                log: { runtime_ms: 12 },
+            });
+            const adapter = new SecureQLAdapter();
+            const profile = makeProfile();
+            const result = await adapter.runQuery(profile, TEST_SECRETS, 'SELECT id, count(*), email FROM users', { maxRows: 100 });
+
+            expect(result.columns).toEqual([{ name: 'id', type: undefined }, { name: 'email', type: undefined }]);
+            expect(result.rows).toEqual([{ id: 1, email: 'user@example.com' }]);
+        });
+
+        it('propagates approval-required responses for the extension to handle', async () => {
+            const approvalError = new SecureQLApprovalRequiredError({
+                status: 'approval_required',
+                request_id: 123,
+                message: 'This query requires approval before execution and approval has been requested.',
+            });
+            mockedExecuteQuery.mockRejectedValue(approvalError);
+            const adapter = new SecureQLAdapter();
+            const profile = makeProfile();
+
+            await expect(adapter.runQuery(profile, TEST_SECRETS, 'UPDATE x SET a=1', { maxRows: 100 }))
+                .rejects.toMatchObject({
+                    name: 'SecureQLApprovalRequiredError',
+                    statusCode: 202,
+                });
         });
     });
 

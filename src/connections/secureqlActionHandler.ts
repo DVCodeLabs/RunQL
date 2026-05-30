@@ -34,6 +34,8 @@ export const secureqlActionHandler: DPProviderActionHandler = async (
                 sqlDialect: info.dbms,
                 connectionType,
                 allowCsvExport: info.allow_csv_export,
+                secureqlQueryApprovalEnabled: info.query_approval?.enabled ?? false,
+                secureqlQueryApprovalRequiredCommandTags: info.query_approval?.required_command_tags ?? [],
             },
             status: {
                 type: 'success' as const,

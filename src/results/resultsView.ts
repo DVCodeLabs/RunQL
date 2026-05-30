@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { QueryResult, ScriptExecutionResult } from '../core/types';
+import { QueryApprovalViewState, QueryResult, ScriptExecutionResult } from '../core/types';
 import { Logger } from '../core/logger';
 import { ErrorHandler, ErrorSeverity, formatGeneralError } from '../core/errorHandler';
 
@@ -14,6 +14,7 @@ export class ResultsViewProvider implements vscode.WebviewViewProvider {
     private _activeDocUri?: string;
     private _lastResultByDocUri = new Map<string, QueryResult>();
     private _lastScriptResultByDocUri = new Map<string, ScriptExecutionResult>();
+    private _approvalStateByDocUri = new Map<string, QueryApprovalViewState>();
     private _allowCsvExportByDocUri = new Map<string, boolean>();
 
     constructor(
@@ -83,6 +84,36 @@ export class ResultsViewProvider implements vscode.WebviewViewProvider {
                         vscode.commands.executeCommand('runql.results.applyEdits', vscode.Uri.parse(this._activeDocUri), message.data);
                     }
                     return;
+
+                case 'queryApprovalStopChecking':
+                    if (this._activeDocUri) {
+                        vscode.commands.executeCommand('runql.queryApproval.stopChecking', vscode.Uri.parse(this._activeDocUri));
+                    }
+                    return;
+
+                case 'queryApprovalCheckStatus':
+                    if (this._activeDocUri) {
+                        vscode.commands.executeCommand('runql.queryApproval.checkStatus', vscode.Uri.parse(this._activeDocUri));
+                    }
+                    return;
+
+                case 'queryApprovalResumeChecking':
+                    if (this._activeDocUri) {
+                        vscode.commands.executeCommand('runql.queryApproval.resumeChecking', vscode.Uri.parse(this._activeDocUri));
+                    }
+                    return;
+
+                case 'queryApprovalRequestApproval':
+                    if (this._activeDocUri) {
+                        vscode.commands.executeCommand('runql.queryApproval.requestApproval', vscode.Uri.parse(this._activeDocUri));
+                    }
+                    return;
+
+                case 'queryApprovalRunApproved':
+                    if (this._activeDocUri) {
+                        vscode.commands.executeCommand('runql.queryApproval.runApproved', vscode.Uri.parse(this._activeDocUri));
+                    }
+                    return;
             }
         });
     }
@@ -113,10 +144,17 @@ export class ResultsViewProvider implements vscode.WebviewViewProvider {
         if (command === 'updateResults') {
             this._lastResultByDocUri.set(uriStr, data as QueryResult);
             this._lastScriptResultByDocUri.delete(uriStr); // clear script cache
+            this._approvalStateByDocUri.delete(uriStr);
         }
         if (command === 'updateScriptResults') {
             this._lastScriptResultByDocUri.set(uriStr, data as ScriptExecutionResult);
             this._lastResultByDocUri.delete(uriStr); // clear single-result cache
+            this._approvalStateByDocUri.delete(uriStr);
+        }
+        if (command === 'updateQueryApproval') {
+            this._approvalStateByDocUri.set(uriStr, data as QueryApprovalViewState);
+            this._lastResultByDocUri.delete(uriStr);
+            this._lastScriptResultByDocUri.delete(uriStr);
         }
         if (command === 'setAllowCsvExport') {
             this._allowCsvExportByDocUri.set(uriStr, data as boolean);
@@ -146,6 +184,12 @@ export class ResultsViewProvider implements vscode.WebviewViewProvider {
         }
 
         // Script results take precedence
+        const approvalState = this._approvalStateByDocUri.get(this._activeDocUri);
+        if (approvalState) {
+            this._view.webview.postMessage({ command: 'updateQueryApproval', data: approvalState });
+            return;
+        }
+
         const scriptResult = this._lastScriptResultByDocUri.get(this._activeDocUri);
         if (scriptResult) {
             this._view.webview.postMessage({ command: 'updateScriptResults', data: scriptResult });

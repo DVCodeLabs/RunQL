@@ -1,7 +1,7 @@
 import * as https from 'https';
 import * as http from 'http';
 import { randomUUID } from 'crypto';
-import { ConnectionType } from '../../core/types';
+import { SecureQLKeyInfo } from '../../core/types';
 
 export interface SecureQLRequestOptions {
     baseUrl: string;
@@ -13,6 +13,12 @@ export interface SecureQLErrorPayload {
     title?: string;
     message?: string;
     code?: number;
+    status?: string;
+    request_id?: string | number;
+    submitted_at?: string;
+    connection_id?: string | number;
+    connection_name?: string;
+    primary_command_tag?: string;
 }
 
 export class SecureQLApiError extends Error {
@@ -24,6 +30,50 @@ export class SecureQLApiError extends Error {
         super(userMessage);
         this.name = 'SecureQLApiError';
     }
+}
+
+export interface SecureQLApprovalRequiredPayload {
+    status: 'approval_required';
+    request_id: number;
+    message: string;
+    submitted_at?: string;
+    connection_id?: string | number;
+    connection_name?: string;
+    primary_command_tag?: string;
+}
+
+export class SecureQLApprovalRequiredError extends SecureQLApiError {
+    constructor(public readonly approval: SecureQLApprovalRequiredPayload) {
+        super(202, approval.message, approval.message);
+        this.name = 'SecureQLApprovalRequiredError';
+    }
+}
+
+export type SecureQLApprovalRequestStatus =
+    | 'Pending'
+    | 'Approved'
+    | 'Executing'
+    | 'Executed'
+    | 'Execution Failed'
+    | 'Denied'
+    | 'Cancelled';
+
+export interface SecureQLApprovalRequestResponse {
+    status: SecureQLApprovalRequestStatus | string;
+    request_id: number;
+    message?: string;
+    submitted_at?: string;
+    connection_id?: string | number;
+    connection_name?: string;
+    primary_command_tag?: string;
+    reviewed_at?: string;
+    approval_expires_at?: string;
+    reviewer_display_name?: string;
+    denial_reason?: string;
+    execution_started_at?: string;
+    execution_completed_at?: string;
+    runtime_ms?: number;
+    execution_error_message?: string;
 }
 
 const LOCALHOST_HOSTS = ['localhost', '127.0.0.1', '::1'];
@@ -75,6 +125,28 @@ function redactSensitive(text: string, apiKey: string): string {
 
 export function mapSecureQLError(statusCode: number, body: SecureQLErrorPayload | string, apiKey: string): SecureQLApiError {
     const msg = typeof body === 'object' ? (body.message ?? '') : String(body);
+
+    if (
+        statusCode === 202
+        && typeof body === 'object'
+        && body.status === 'approval_required'
+        && body.request_id !== undefined
+        && body.request_id !== null
+    ) {
+        const requestId = Number(body.request_id);
+        if (!Number.isFinite(requestId)) {
+            return new SecureQLApiError(statusCode, 'SecureQL approval response did not include a valid request ID.');
+        }
+        return new SecureQLApprovalRequiredError({
+            status: 'approval_required',
+            request_id: requestId,
+            message: body.message || 'This query requires approval before execution and approval has been requested.',
+            submitted_at: body.submitted_at,
+            connection_id: body.connection_id,
+            connection_name: body.connection_name,
+            primary_command_tag: body.primary_command_tag,
+        });
+    }
 
     if (statusCode === 401) {
         return new SecureQLApiError(401, 'API key is invalid or missing for this SecureQL connection.');
@@ -298,16 +370,7 @@ function parseResponseBody(raw: string): any {
     }
 }
 
-export interface KeyInfo {
-    connection_id: number;
-    connection_name: string;
-    dbms: string;
-    database_name: string | null;
-    connection_type?: ConnectionType;
-    allow_csv_export: boolean;
-    connection_account_id?: number;
-    user_id?: number;
-}
+export interface KeyInfo extends SecureQLKeyInfo {}
 
 /**
  * GET /v1/key/me — resolve connection metadata from just the API key.
@@ -350,12 +413,15 @@ export async function getSchema(opts: SecureQLRequestOptions): Promise<any> {
  * into the standard `{ results, log }` shape before returning, so callers don't
  * need to know about the streaming protocol.
  */
-export async function executeQuery(opts: SecureQLRequestOptions, sql: string): Promise<any> {
+export async function executeQuery(opts: SecureQLRequestOptions, sql: string, approvalRequestId?: string | number): Promise<any> {
     const base = normalizeBaseUrl(opts.baseUrl);
     enforceHttps(base);
 
     const url = `${base}/v1/key/connections/${opts.connectionId}/query`;
-    const payload = JSON.stringify({ sql });
+    const payload = JSON.stringify({
+        sql,
+        ...(approvalRequestId ? { approval_request_id: approvalRequestId } : {}),
+    });
 
     const headers = buildHeaders(opts.apiKey);
     headers['Accept'] = 'application/x-ndjson';
@@ -367,4 +433,40 @@ export async function executeQuery(opts: SecureQLRequestOptions, sql: string): P
     }
 
     return resp.parsed;
+}
+
+export async function createQueryApprovalRequest(
+    opts: SecureQLRequestOptions,
+    sql: string,
+): Promise<SecureQLApprovalRequestResponse> {
+    const base = normalizeBaseUrl(opts.baseUrl);
+    enforceHttps(base);
+
+    const url = `${base}/v1/key/query-approval/requests`;
+    const resp = await makeRequest(url, 'POST', buildHeaders(opts.apiKey), JSON.stringify({ sql }));
+    const body = parseResponseBody(resp.body);
+
+    if (resp.statusCode !== 200) {
+        throw mapSecureQLError(resp.statusCode, body, opts.apiKey);
+    }
+
+    return body as SecureQLApprovalRequestResponse;
+}
+
+export async function getQueryApprovalRequest(
+    opts: SecureQLRequestOptions,
+    requestId: string,
+): Promise<SecureQLApprovalRequestResponse> {
+    const base = normalizeBaseUrl(opts.baseUrl);
+    enforceHttps(base);
+
+    const url = `${base}/v1/key/query-approval/requests/${encodeURIComponent(requestId)}`;
+    const resp = await makeRequest(url, 'GET', buildHeaders(opts.apiKey));
+    const body = parseResponseBody(resp.body);
+
+    if (resp.statusCode !== 200) {
+        throw mapSecureQLError(resp.statusCode, body, opts.apiKey);
+    }
+
+    return body as SecureQLApprovalRequestResponse;
 }

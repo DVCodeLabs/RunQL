@@ -1,4 +1,4 @@
-import { normalizeBaseUrl, mapSecureQLError, SecureQLApiError } from '../adapters/secureqlClient';
+import { normalizeBaseUrl, mapSecureQLError, SecureQLApiError, SecureQLApprovalRequiredError } from '../adapters/secureqlClient';
 
 describe('normalizeBaseUrl', () => {
     it('strips trailing slashes', () => {
@@ -68,6 +68,43 @@ describe('mapSecureQLError', () => {
         const err = mapSecureQLError(404, { message: 'Not found' }, 'key123');
         expect(err.statusCode).toBe(404);
         expect(err.userMessage).toContain('not found');
+    });
+
+    it('maps approval-required 202 responses to a typed approval error', () => {
+        const err = mapSecureQLError(202, {
+            status: 'approval_required',
+            request_id: 123,
+            message: 'This query requires approval before execution and approval has been requested.',
+            connection_name: 'Production',
+            primary_command_tag: 'UPDATE',
+        }, 'key123');
+
+        expect(err).toBeInstanceOf(SecureQLApprovalRequiredError);
+        expect(err.statusCode).toBe(202);
+        expect((err as SecureQLApprovalRequiredError).approval.request_id).toBe(123);
+        expect((err as SecureQLApprovalRequiredError).approval.connection_name).toBe('Production');
+    });
+
+    it('accepts numeric-string approval request IDs from older servers', () => {
+        const err = mapSecureQLError(202, {
+            status: 'approval_required',
+            request_id: '123',
+            message: 'Approval required.',
+        }, 'key123');
+
+        expect(err).toBeInstanceOf(SecureQLApprovalRequiredError);
+        expect((err as SecureQLApprovalRequiredError).approval.request_id).toBe(123);
+    });
+
+    it('does not drop zero-valued approval request IDs before validation', () => {
+        const err = mapSecureQLError(202, {
+            status: 'approval_required',
+            request_id: 0,
+            message: 'Approval required.',
+        }, 'key123');
+
+        expect(err).toBeInstanceOf(SecureQLApprovalRequiredError);
+        expect((err as SecureQLApprovalRequiredError).approval.request_id).toBe(0);
     });
 
     it('redacts API key from error messages', () => {
