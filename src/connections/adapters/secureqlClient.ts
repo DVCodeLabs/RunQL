@@ -370,7 +370,7 @@ function parseResponseBody(raw: string): any {
     }
 }
 
-export interface KeyInfo extends SecureQLKeyInfo {}
+export type KeyInfo = SecureQLKeyInfo;
 
 /**
  * GET /v1/key/me — resolve connection metadata from just the API key.
