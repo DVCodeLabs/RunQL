@@ -157,3 +157,8 @@ Archive deleted schema(s) during introspection refresh
 ### Changes
 - Changes to ensure QueryIndex and QueryHistory get updated if a connection is renamed.
 - Add product gif for readme.
+
+## [1.10.0] 
+
+### Added
+- Add query approval support for SecureQL connections.
