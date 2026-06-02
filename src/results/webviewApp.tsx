@@ -16,7 +16,7 @@ ModuleRegistry.registerModules([AllCommunityModule]);
 
 import { ChartBuilder } from './chartBuilder';
 
-const COLUMN_SIZE_SAMPLE_LIMIT = 10;
+const COLUMN_SIZE_SAMPLE_LIMIT = 2;
 const MAX_DISPLAY_CELL_VALUE_LENGTH = 4096;
 
 const myThemeDark = themeBalham.withPart(colorSchemeDark).withParams({
@@ -224,38 +224,23 @@ function getColumnFilter(cellDataType: ColDef['cellDataType']): ColDef['filter']
     return 'agTextColumnFilter';
 }
 
-function getColumnSizing(col: any, rows: any[]): Pick<ColDef, 'width'> {
+function getColumnSizing(col: any, rows: any[]): Pick<ColDef, 'initialWidth'> {
     const type = normalizeColumnType(col);
-    if (isJsonColumnType(type)) {
-        return { width: 300 };
-    }
-    if (isLargeTextColumnType(type)) {
-        return { width: 320 };
+    if (isJsonColumnType(type) || isLargeTextColumnType(type) || isTextColumnType(type)) {
+        return { initialWidth: 300 };
     }
 
     const samples = rows
         .slice(0, COLUMN_SIZE_SAMPLE_LIMIT)
         .map((row) => row?.[col.name])
         .filter((value) => value !== null && value !== undefined);
-    const maxLength = samples.reduce((max, value) => Math.max(max, formatCellValue(value, { maxLength: MAX_DISPLAY_CELL_VALUE_LENGTH }).length), 0);
     const looksJson = samples.some(isJsonLikeCellValue);
-    const looksText = isTextColumnType(type) || samples.some((value) => typeof value === 'string');
+    const looksText = samples.some((value) => typeof value === 'string');
 
-    if (looksJson) {
-        return { width: 300 };
+    if (looksJson || looksText) {
+        return { initialWidth: 300 };
     }
-
-    if (!looksText) {
-        return {};
-    }
-
-    if (maxLength > 500) {
-        return { width: 320 };
-    }
-    if (maxLength > 120) {
-        return { width: 240 };
-    }
-    return { width: 160 };
+    return {};
 }
 
 function columnDefaultIsNull(col?: any): boolean {
@@ -950,10 +935,6 @@ const ResultsTab = ({
         minWidth: 100,
     };
 
-    const autoSizeStrategy = {
-        type: 'fitCellContents' as const,
-    };
-
     const dirtyCount = Object.values(pendingEdits)
         .reduce((sum, rowEdit) => sum + Object.keys(rowEdit.changes).length, 0);
 
@@ -1051,7 +1032,6 @@ const ResultsTab = ({
                     columnDefs={colDefs}
                     defaultColDef={defaultColDef}
                     theme={theme}
-                    autoSizeStrategy={autoSizeStrategy}
                     enableCellTextSelection={false}
                     pagination={true}
                     paginationPageSize={100}
