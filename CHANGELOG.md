@@ -179,3 +179,8 @@ Archive deleted schema(s) during introspection refresh
 - Improved cell copy functionality:
   - Single-click a cell and use cmd/ctrl + c to copy the full cell contents.
   - Double-click to enter edit mode and copy part of the cell contents without changing the value.
+
+## [1.11.2]
+
+### Changes
+- Bumping the version to trigger a new build due to a windows build problem.
