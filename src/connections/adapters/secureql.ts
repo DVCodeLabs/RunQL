@@ -255,6 +255,22 @@ type IndexedQueryColumn = {
     sourceIndex: number;
 };
 
+function isSecureQlJsonColumn(column: QueryColumn): boolean {
+    return /\b(json|jsonb)\b/i.test(String(column.normalizedType ?? column.type ?? ''));
+}
+
+function decodeSecureQlJsonValue(value: unknown, column: QueryColumn): unknown {
+    if (!isSecureQlJsonColumn(column) || typeof value !== 'string') {
+        return value;
+    }
+
+    try {
+        return JSON.parse(value);
+    } catch {
+        return value;
+    }
+}
+
 export function mapQueryResponse(raw: any): QueryResult {
     const results: SecureQLQueryReturn[] = raw?.results ?? [];
     const log = raw?.log;
@@ -308,10 +324,16 @@ export function mapQueryResponse(raw: any): QueryResult {
     // Keep rows as objects keyed by column name — AG Grid in runQL expects this format
     const objectRows = (tabular.rows as unknown[]).map((row) => {
         if (!Array.isArray(row)) {
-            return row as Record<string, unknown>;
+            const objectRow = { ...(row as Record<string, unknown>) };
+            for (const { column } of indexedColumns) {
+                if (column.name in objectRow) {
+                    objectRow[column.name] = decodeSecureQlJsonValue(objectRow[column.name], column);
+                }
+            }
+            return objectRow;
         }
         return indexedColumns.reduce<Record<string, unknown>>((acc, { column, sourceIndex }) => {
-            acc[column.name] = row[sourceIndex];
+            acc[column.name] = decodeSecureQlJsonValue(row[sourceIndex], column);
             return acc;
         }, {});
     });

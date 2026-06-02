@@ -109,6 +109,22 @@ button {
     font-family: var(--vscode-font-family);
 }
 
+.results-cell-editor {
+    width: min(720px, 82vw);
+    height: min(320px, 42vh);
+    box-sizing: border-box;
+    resize: both;
+    padding: 10px 12px;
+    border: 1px solid var(--vscode-focusBorder, var(--vscode-widget-border));
+    border-radius: 6px;
+    outline: none;
+    background: var(--vscode-input-background, var(--vscode-editorWidget-background));
+    color: var(--vscode-input-foreground, var(--vscode-editor-foreground));
+    font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
 .save-confirm-overlay {
     position: fixed;
     inset: 0;

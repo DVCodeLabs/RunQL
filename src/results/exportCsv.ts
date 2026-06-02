@@ -17,7 +17,7 @@ export async function exportToCsv(data: QueryResult): Promise<void> {
 
     try {
         const csvContent = convertToCsv(data);
-        await vscode.workspace.fs.writeFile(uri, Buffer.from(csvContent, 'utf8'));
+        await vscode.workspace.fs.writeFile(uri, Buffer.from(`\ufeff${csvContent}`, 'utf8'));
         vscode.window.showInformationMessage(`Exported ${data.rowCount} rows to CSV.`);
     } catch (e: unknown) {
         vscode.window.showErrorMessage(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -34,11 +34,31 @@ function convertToCsv(data: QueryResult): string {
         }).join(',');
     });
 
-    return [header, ...rows].join('\n');
+    return [header, ...rows].join('\r\n');
 }
 
 function escapeCsv(val: unknown): string {
     if (val === null || val === undefined) return '';
-    const s = String(val);
+    const s = formatCsvValue(val);
     return s.replace(/"/g, '""'); // escape double quotes
+}
+
+function formatCsvValue(val: unknown): string {
+    if (typeof val === 'string') return val;
+    if (typeof val === 'number' || typeof val === 'boolean' || typeof val === 'bigint') {
+        return String(val);
+    }
+    if (!isJsonLikeValue(val)) {
+        return String(val);
+    }
+    try {
+        const json = JSON.stringify(val);
+        return json === undefined ? String(val) : json;
+    } catch {
+        return String(val);
+    }
+}
+
+function isJsonLikeValue(val: unknown): boolean {
+    return Array.isArray(val) || Object.prototype.toString.call(val) === '[object Object]';
 }

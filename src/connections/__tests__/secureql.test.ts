@@ -148,6 +148,37 @@ describe('SecureQLAdapter', () => {
             expect(result.elapsedMs).toBe(10);
         });
 
+        it('decodes JSON object and array fields from streaming rows', async () => {
+            const { reassembleNdjson } = jest.requireActual('../adapters/secureqlClient') as typeof import('../adapters/secureqlClient');
+            const rawNdjson = [
+                JSON.stringify({
+                    type: 'result_start',
+                    fields: [
+                        { field: 'metadata', colType: 'jsonb' },
+                        { field: 'tags', colType: 'jsonb' },
+                    ],
+                }),
+                JSON.stringify({
+                    type: 'row',
+                    data: {
+                        metadata: '{"status":"active","score":7}',
+                        tags: '["priority","customer"]',
+                    },
+                }),
+                JSON.stringify({ type: 'result_end', runtime: 10 }),
+                JSON.stringify({ type: 'log', runtime_ms: 10 }),
+            ].join('\n');
+            mockedExecuteQuery.mockResolvedValue(reassembleNdjson(rawNdjson));
+            const adapter = new SecureQLAdapter();
+            const profile = makeProfile();
+            const result = await adapter.runQuery(profile, TEST_SECRETS, 'SELECT metadata, tags FROM users', { maxRows: 100 });
+
+            expect(result.rows).toEqual([{
+                metadata: { status: 'active', score: 7 },
+                tags: ['priority', 'customer'],
+            }]);
+        });
+
         it('reuses key info supplied by the run caller', async () => {
             const adapter = new SecureQLAdapter();
             const profile = makeProfile();

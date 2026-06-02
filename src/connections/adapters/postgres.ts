@@ -16,6 +16,28 @@ import { isDbAdminConnection } from "../connectionType";
 
 const PG_SYSTEM_SCHEMAS = ['information_schema', 'pg_catalog'];
 
+function normalizePostgresTypeId(typeId: number): string | undefined {
+  const typeMap: Record<number, string> = {
+    16: 'boolean',
+    20: 'bigint',
+    21: 'smallint',
+    23: 'integer',
+    25: 'text',
+    700: 'real',
+    701: 'double precision',
+    1042: 'char',
+    1043: 'varchar',
+    1082: 'date',
+    1114: 'timestamp',
+    1184: 'timestamptz',
+    114: 'json',
+    1700: 'numeric',
+    2950: 'uuid',
+    3802: 'jsonb',
+  };
+  return typeMap[typeId];
+}
+
 function schemaListSql(schemas: string[]): string {
   return schemas.map((s) => `'${s}'`).join(', ');
 }
@@ -74,6 +96,7 @@ export class PostgresAdapter implements DbAdapter {
       const columns = res.fields.map((f) => ({
         name: f.name,
         type: String(f.dataTypeID), // pg gives OIDs, need mapping if we want strings. "unknown" OID is fine if we just pass numbers. Or we use raw type name? pg-types might translate.
+        normalizedType: normalizePostgresTypeId(f.dataTypeID),
         // res.fields[i].dataTypeID is number.
       }));
 

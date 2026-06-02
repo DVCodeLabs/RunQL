@@ -47,6 +47,10 @@ export class ResultsPanel {
                         }
                         return;
 
+                    case 'copyCellContent':
+                        vscode.env.clipboard.writeText(String(message.data?.value ?? ''));
+                        return;
+
                     case 'viewReady':
                         if (this._allowCsvExport !== undefined) {
                             this._panel.webview.postMessage({ command: 'setAllowCsvExport', data: this._allowCsvExport });

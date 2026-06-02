@@ -220,6 +220,9 @@ export interface QueryColumn {
     name: string;
     type?: string;              // adapter native type
     normalizedType?: string;    // RunQL normalization
+    nullable?: boolean;
+    defaultValue?: unknown;
+    defaultExpression?: string | null;
 }
 
 export interface QueryResult {
@@ -429,6 +432,8 @@ export interface ColumnModel {
     type: string;                 // adapter native type
     normalizedType?: string;      // optional normalized type
     nullable?: boolean;
+    defaultValue?: unknown;
+    defaultExpression?: string | null;
     comment?: string;
 }
 

@@ -291,7 +291,7 @@ function makeNdjsonRequest(
  *   error        → query error within a statement
  *   log          → final log metadata (always last)
  */
-function reassembleNdjson(raw: string): { results: any[]; log?: any } {
+export function reassembleNdjson(raw: string): { results: any[]; log?: any } {
     const lines = raw.split('\n').filter((l) => l.length > 0);
     const results: any[] = [];
     let log: any;

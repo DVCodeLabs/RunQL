@@ -96,6 +96,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     source: QueryResultSource;
     primaryKeyColumns: string[];
     editableColumns: string[];
+    columns?: ColumnModel[];
   }>();
   const lastRunContextByDocUri = new Map<string, {
     refreshSql: string;
@@ -252,6 +253,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
         return base;
       }
 
+      applyColumnMetadataToResultColumns(columns, resolved.columns);
       base.source = resolved.source;
       base.editable = {
         enabled: true,
@@ -274,6 +276,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
         return base;
       }
 
+      applyColumnMetadataToResultColumns(columns, resolved.columns);
       base.source = resolved.source;
       base.editable = {
         enabled: true,
@@ -289,6 +292,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       return base;
     }
 
+    applyColumnMetadataToResultColumns(columns, previewCtx.columns);
     base.source = previewCtx.source;
     base.editable = {
       enabled: true,
@@ -669,7 +673,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
         canResume: false,
         canRunApprovedQuery: true,
       }));
-      if (automatic) {
+      if (options.automatic) {
         vscode.window.showInformationMessage('Query approved. Run it from the Results panel.');
       }
       return;
@@ -1004,7 +1008,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
   const resolveEditableSourceFromQuery = async (
     profile: ConnectionProfile,
     sql: string
-  ): Promise<{ source: QueryResultSource; primaryKeyColumns: string[]; editableColumns: string[] } | null> => {
+  ): Promise<{ source: QueryResultSource; primaryKeyColumns: string[]; editableColumns: string[]; columns?: ColumnModel[] } | null> => {
     const parsed = parseSimpleSelectSource(sql);
     if (!parsed) {
       return null;
@@ -1063,8 +1067,53 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
         table: match.table.name
       },
       primaryKeyColumns,
-      editableColumns
+      editableColumns,
+      columns: match.table.columns
     };
+  };
+
+  const applyColumnMetadataToResultColumns = (
+    resultColumns: QueryColumn[],
+    sourceColumns?: ColumnModel[]
+  ): void => {
+    if (!Array.isArray(sourceColumns) || sourceColumns.length === 0) return;
+
+    const sourceByExactName = new Map<string, ColumnModel>();
+    const sourceByLowerName = new Map<string, ColumnModel[]>();
+    for (const col of sourceColumns) {
+      if (typeof col.name === 'string') {
+        sourceByExactName.set(col.name, col);
+        const lowerName = col.name.toLowerCase();
+        const matches = sourceByLowerName.get(lowerName) || [];
+        matches.push(col);
+        sourceByLowerName.set(lowerName, matches);
+      }
+    }
+
+    for (const resultCol of resultColumns) {
+      const sourceCol = sourceByExactName.get(resultCol.name)
+        || (() => {
+          const matches = sourceByLowerName.get(resultCol.name.toLowerCase()) || [];
+          return matches.length === 1 ? matches[0] : undefined;
+        })();
+      if (!sourceCol) continue;
+
+      if (resultCol.type === undefined && sourceCol.type !== undefined) {
+        resultCol.type = sourceCol.type;
+      }
+      if (resultCol.normalizedType === undefined && sourceCol.normalizedType !== undefined) {
+        resultCol.normalizedType = sourceCol.normalizedType;
+      }
+      if (sourceCol.nullable !== undefined) {
+        resultCol.nullable = sourceCol.nullable;
+      }
+      if (sourceCol.defaultValue !== undefined) {
+        resultCol.defaultValue = sourceCol.defaultValue;
+      }
+      if (sourceCol.defaultExpression !== undefined) {
+        resultCol.defaultExpression = sourceCol.defaultExpression;
+      }
+    }
   };
 
   const mapEditableMetadataToResultColumns = (
@@ -1906,7 +1955,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
         table: tableName
       },
       primaryKeyColumns,
-      editableColumns
+      editableColumns,
+      columns: item.table?.columns
     });
 
     // Pre-set the connection in the CodeLens store BEFORE showing the document.

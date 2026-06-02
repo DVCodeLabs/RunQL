@@ -9,6 +9,39 @@ import { isDbAdminConnection } from '../connectionType';
 const MYSQL_SYSTEM_SCHEMAS = ['information_schema', 'mysql', 'performance_schema', 'sys'];
 const MYSQL_ADMIN_SCHEMAS = ['information_schema', 'performance_schema', 'sys', 'mysql'];
 
+function normalizeMysqlFieldType(type: unknown): string | undefined {
+    const numericType = Number(type);
+    if (!Number.isFinite(numericType)) return undefined;
+
+    const typeMap: Record<number, string> = {
+        0: 'decimal',
+        1: 'tinyint',
+        2: 'smallint',
+        3: 'integer',
+        4: 'float',
+        5: 'double',
+        7: 'timestamp',
+        8: 'bigint',
+        9: 'mediumint',
+        10: 'date',
+        11: 'time',
+        12: 'datetime',
+        13: 'year',
+        16: 'bit',
+        245: 'json',
+        246: 'decimal',
+        247: 'enum',
+        248: 'set',
+        249: 'tinyblob',
+        250: 'mediumblob',
+        251: 'longblob',
+        252: 'blob',
+        253: 'varchar',
+        254: 'char',
+    };
+    return typeMap[numericType];
+}
+
 function placeholders(values: string[]): string {
     return values.map(() => '?').join(', ');
 }
@@ -78,7 +111,8 @@ export class MySQLAdapter implements DbAdapter {
             if (fields && Array.isArray(fields)) {
                 columns = fields.map(f => ({
                     name: f.name,
-                    type: String(f.type) // Just use the ID as string for now
+                    type: String(f.type), // Just use the ID as string for now
+                    normalizedType: normalizeMysqlFieldType(f.type)
                 }));
             }
 

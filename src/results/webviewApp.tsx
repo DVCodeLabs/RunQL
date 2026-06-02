@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useImperativeHandle } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Download, Activity, RefreshCw, PenBox } from 'lucide-react';
 import { AgGridReact } from 'ag-grid-react';
@@ -15,6 +15,9 @@ import './webviewApp.css';
 ModuleRegistry.registerModules([AllCommunityModule]);
 
 import { ChartBuilder } from './chartBuilder';
+
+const COLUMN_SIZE_SAMPLE_LIMIT = 10;
+const MAX_DISPLAY_CELL_VALUE_LENGTH = 4096;
 
 const myThemeDark = themeBalham.withPart(colorSchemeDark).withParams({
     backgroundColor: 'transparent',
@@ -124,6 +127,239 @@ function isEqualValue(a: unknown, b: unknown): boolean {
         }
     }
     return false;
+}
+
+function truncateCellText(value: string, maxLength?: number): string {
+    if (!maxLength || value.length <= maxLength) return value;
+    return `${value.slice(0, maxLength)}\n... [truncated]`;
+}
+
+function formatCellValue(value: unknown, options: { maxLength?: number } = {}): string {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return truncateCellText(value, options.maxLength);
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+        return String(value);
+    }
+    if (!isJsonLikeCellValue(value)) {
+        return truncateCellText(String(value), options.maxLength);
+    }
+    try {
+        const json = JSON.stringify(value);
+        return truncateCellText(json === undefined ? String(value) : json, options.maxLength);
+    } catch {
+        return truncateCellText(String(value), options.maxLength);
+    }
+}
+
+function normalizeColumnType(col: any): string {
+    const rawType = String(col.normalizedType ?? col.type ?? '').toLowerCase();
+    const numericTypeAliases: Record<string, string> = {
+        '16': 'boolean',
+        '20': 'bigint',
+        '21': 'smallint',
+        '23': 'integer',
+        '25': 'text',
+        '700': 'real',
+        '701': 'double precision',
+        '1042': 'char',
+        '1043': 'varchar',
+        '1082': 'date',
+        '1114': 'timestamp',
+        '1184': 'timestamptz',
+        '114': 'json',
+        '1700': 'numeric',
+        '2950': 'uuid',
+        '3802': 'jsonb',
+    };
+    return numericTypeAliases[rawType] ?? rawType;
+}
+
+function isJsonLikeCellValue(value: unknown): boolean {
+    return Array.isArray(value) || Object.prototype.toString.call(value) === '[object Object]';
+}
+
+function isJsonColumnType(type: string): boolean {
+    return /\b(json|jsonb|variant|object|array|struct|record|map)\b/.test(type);
+}
+
+function isTextColumnType(type: string): boolean {
+    return /\b(text|ntext|varchar|nvarchar|char|nchar|character|string|clob|nclob|xml|uuid|uniqueidentifier)\b/.test(type);
+}
+
+function isLargeTextColumnType(type: string): boolean {
+    return /\b(text|ntext|clob|nclob|xml|variant|object|array|struct|record|map)\b/.test(type);
+}
+
+function isNumericColumnType(type: string): boolean {
+    return /\b(bigint|int|integer|mediumint|smallint|tinyint|year|number|numeric|decimal|dec|double|float|real|bignumeric)\b/.test(type);
+}
+
+function isBooleanColumnType(type: string): boolean {
+    return /\b(bool|boolean|bit)\b/.test(type);
+}
+
+function isDateColumnType(type: string): boolean {
+    return /\b(date|datetime|datetime2|smalldatetime|timestamp|timestamptz|timestamp_tz|timestamp_ntz|time)\b/.test(type);
+}
+
+function getColumnDataType(col: any, rows: any[]): ColDef['cellDataType'] {
+    const type = normalizeColumnType(col);
+    const samples = rows
+        .slice(0, COLUMN_SIZE_SAMPLE_LIMIT)
+        .map((row) => row?.[col.name])
+        .filter((value) => value !== null && value !== undefined);
+
+    if (isJsonColumnType(type) || samples.some(isJsonLikeCellValue)) return 'object';
+    if (isBooleanColumnType(type) || samples.some((value) => typeof value === 'boolean')) return 'boolean';
+    if (isNumericColumnType(type) || samples.some((value) => typeof value === 'number')) return 'number';
+    if (samples.some((value) => value instanceof Date)) return 'date';
+    if (isDateColumnType(type)) return 'dateString';
+    return 'text';
+}
+
+function getColumnFilter(cellDataType: ColDef['cellDataType']): ColDef['filter'] {
+    if (cellDataType === 'number') return 'agNumberColumnFilter';
+    if (cellDataType === 'date' || cellDataType === 'dateString') return 'agDateColumnFilter';
+    if (cellDataType === 'boolean') return 'agSetColumnFilter';
+    return 'agTextColumnFilter';
+}
+
+function getColumnSizing(col: any, rows: any[]): Pick<ColDef, 'width'> {
+    const type = normalizeColumnType(col);
+    if (isJsonColumnType(type)) {
+        return { width: 300 };
+    }
+    if (isLargeTextColumnType(type)) {
+        return { width: 320 };
+    }
+
+    const samples = rows
+        .slice(0, COLUMN_SIZE_SAMPLE_LIMIT)
+        .map((row) => row?.[col.name])
+        .filter((value) => value !== null && value !== undefined);
+    const maxLength = samples.reduce((max, value) => Math.max(max, formatCellValue(value, { maxLength: MAX_DISPLAY_CELL_VALUE_LENGTH }).length), 0);
+    const looksJson = samples.some(isJsonLikeCellValue);
+    const looksText = isTextColumnType(type) || samples.some((value) => typeof value === 'string');
+
+    if (looksJson) {
+        return { width: 300 };
+    }
+
+    if (!looksText) {
+        return {};
+    }
+
+    if (maxLength > 500) {
+        return { width: 320 };
+    }
+    if (maxLength > 120) {
+        return { width: 240 };
+    }
+    return { width: 160 };
+}
+
+function columnDefaultIsNull(col?: any): boolean {
+    if (!col) return false;
+    if (col.defaultValue === null) return true;
+    if (col.defaultValue !== undefined) return false;
+    const defaultExpression = col.defaultExpression;
+    if (defaultExpression === null) return true;
+    if (typeof defaultExpression === 'string') {
+        const normalized = defaultExpression.trim().replace(/^['"]|['"]$/g, '').toLowerCase();
+        return normalized === '' || normalized === 'null';
+    }
+    return defaultExpression === undefined && col.nullable !== false;
+}
+
+function getClearedTextValue(col?: any): string | null {
+    return columnDefaultIsNull(col) ? null : '';
+}
+
+type ParsedCellValue = { ok: true; value: unknown } | { ok: false; value: unknown; error: string };
+
+function parseEditedCellValue(input: string, oldValue: unknown, col?: any): ParsedCellValue {
+    const textInput = typeof input === 'string' ? input : formatCellValue(input);
+    const trimmed = textInput.trim();
+    const type = normalizeColumnType(col || {});
+    const isNumeric = isNumericColumnType(type) || typeof oldValue === 'number' || typeof oldValue === 'bigint';
+    const isBoolean = isBooleanColumnType(type) || typeof oldValue === 'boolean';
+    const isJson = isJsonColumnType(type) || isJsonLikeCellValue(oldValue);
+    const isText = isTextColumnType(type) || typeof oldValue === 'string';
+
+    if (textInput === formatCellValue(oldValue)) {
+        return { ok: true, value: oldValue };
+    }
+
+    if (trimmed === '') {
+        return { ok: true, value: isText && !isJson ? getClearedTextValue(col) : null };
+    }
+
+    if (isNumeric) {
+        if (typeof oldValue === 'bigint' || /\bbigint\b/.test(type)) {
+            try {
+                return { ok: true, value: BigInt(trimmed) };
+            } catch {
+                return { ok: false, value: oldValue, error: `Invalid integer value for ${col?.name || 'cell'}.` };
+            }
+        }
+        const parsed = Number(trimmed);
+        return Number.isNaN(parsed)
+            ? { ok: false, value: oldValue, error: `Invalid numeric value for ${col?.name || 'cell'}.` }
+            : { ok: true, value: parsed };
+    }
+
+    if (isBoolean) {
+        const normalized = trimmed.toLowerCase();
+        if (['true', 't', '1', 'yes', 'y'].includes(normalized)) return { ok: true, value: true };
+        if (['false', 'f', '0', 'no', 'n'].includes(normalized)) return { ok: true, value: false };
+        return { ok: false, value: oldValue, error: `Invalid boolean value for ${col?.name || 'cell'}. Use true/false, yes/no, or 1/0.` };
+    }
+
+    if (!isJson) {
+        return { ok: true, value: textInput };
+    }
+
+    try {
+        return { ok: true, value: JSON.parse(textInput) };
+    } catch {
+        return { ok: false, value: oldValue, error: `Invalid JSON value for ${col?.name || 'cell'}.` };
+    }
+}
+
+const FullTextCellEditor = React.forwardRef((props: any, ref) => {
+    const [value, setValue] = useState(() => formatCellValue(props.value));
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    useImperativeHandle(ref, () => ({
+        getValue: () => value,
+        afterGuiAttached: () => {
+            const textarea = textareaRef.current;
+            if (!textarea) return;
+            textarea.focus();
+            textarea.select();
+        },
+    }), [value]);
+
+    return (
+        <textarea
+            ref={textareaRef}
+            className="results-cell-editor"
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={(event) => {
+                if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+                    event.stopPropagation();
+                }
+            }}
+        />
+    );
+});
+FullTextCellEditor.displayName = 'FullTextCellEditor';
+
+function isTextEditingElement(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    const tagName = target.tagName.toLowerCase();
+    return tagName === 'input' || tagName === 'textarea' || target.isContentEditable;
 }
 
 function escapeHtml(text: string): string {
@@ -563,11 +799,25 @@ const QueryApprovalView = ({ state }: { state: QueryApprovalState }) => {
     );
 };
 
-const ResultsTab = ({ data, theme, onOpenChartBuilder, allowCsvExport }: { data: GridData | null, theme: any, onOpenChartBuilder: () => void, allowCsvExport: boolean }) => {
+const ResultsTab = ({
+    data,
+    theme,
+    onOpenChartBuilder,
+    allowCsvExport,
+    onNotify
+}: {
+    data: GridData | null;
+    theme: any;
+    onOpenChartBuilder: () => void;
+    allowCsvExport: boolean;
+    onNotify?: (title: string, message: string) => void;
+}) => {
     const [rowData, setRowData] = useState<any[]>([]);
     const [baselineRows, setBaselineRows] = useState<any[]>([]);
     const [baselineByKey, setBaselineByKey] = useState<Record<string, any>>({});
     const [pendingEdits, setPendingEdits] = useState<Record<string, PendingRowEdit>>({});
+    const gridRef = useRef<AgGridReact<any>>(null);
+    const pendingEditsRef = useRef<Record<string, PendingRowEdit>>({});
 
     useEffect(() => {
         if (!data) {
@@ -583,12 +833,21 @@ const ResultsTab = ({ data, theme, onOpenChartBuilder, allowCsvExport }: { data:
         setPendingEdits({});
     }, [data]);
 
+    useEffect(() => {
+        pendingEditsRef.current = pendingEdits;
+        const api = gridRef.current?.api;
+        if (!api || api.getEditingCells().length > 0) return;
+        api.refreshCells({ force: true });
+    }, [pendingEdits]);
+
     const editMeta = data?.meta?.editable;
     const primaryKeyColumns = editMeta?.primaryKeyColumns || [];
     const editableColumns = editMeta?.editableColumns || [];
     const editableEnabled = !!editMeta?.enabled;
-    const editableColumnSet = new Set(editableColumns);
-    const primaryKeySet = new Set(primaryKeyColumns);
+    const editableColumnsKey = editableColumns.join('\u0000');
+    const primaryKeyColumnsKey = primaryKeyColumns.join('\u0000');
+    const editableColumnSet = useMemo(() => new Set(editableColumns), [editableColumnsKey]);
+    const primaryKeySet = useMemo(() => new Set(primaryKeyColumns), [primaryKeyColumnsKey]);
     const allowExport = allowCsvExport !== false;
 
     const makeRowKey = (row: any): Record<string, unknown> | null => {
@@ -618,7 +877,57 @@ const ResultsTab = ({ data, theme, onOpenChartBuilder, allowCsvExport }: { data:
             next[rowKeyString(rk)] = { ...row };
         }
         setBaselineByKey(next);
-    }, [editableEnabled, baselineRows, primaryKeyColumns.join('|')]);
+    }, [editableEnabled, baselineRows, primaryKeyColumnsKey]);
+
+    const isDirtyCell = (row: any, colName: string): boolean => {
+        if (!editableEnabled) return false;
+        const rowKey = makeRowKey(row);
+        if (!rowKey) return false;
+        const key = rowKeyString(rowKey);
+        return !!pendingEditsRef.current[key]?.changes[colName];
+    };
+
+    const colDefs: ColDef[] = useMemo(() => (data?.columns || []).map((col: any) => {
+        const type = normalizeColumnType(col);
+        const cellDataType = getColumnDataType(col, data?.rows || []);
+        const usesFormattedTextFilter = cellDataType === 'object';
+        const usesFullTextEditor = cellDataType === 'object' || isLargeTextColumnType(type);
+
+        return {
+            field: col.name,
+            headerName: col.name,
+            editable: editableEnabled && editableColumnSet.has(col.name) && !primaryKeySet.has(col.name),
+            cellDataType,
+            filter: getColumnFilter(cellDataType),
+            valueFormatter: (params: any) => formatCellValue(params.value),
+            cellRenderer: (params: any) => formatCellValue(params.value, { maxLength: MAX_DISPLAY_CELL_VALUE_LENGTH }),
+            valueSetter: (params: any) => {
+                const parsed = parseEditedCellValue(params.newValue, params.oldValue, col);
+                if (!parsed.ok) {
+                    onNotify?.('Invalid cell value', parsed.error);
+                    return false;
+                }
+                if (isEqualValue(params.oldValue, parsed.value)) {
+                    return false;
+                }
+                params.data[col.name] = parsed.value;
+                return true;
+            },
+            filterValueGetter: usesFormattedTextFilter ? (params: any) => formatCellValue(params.data?.[col.name]) : undefined,
+            cellEditor: usesFullTextEditor ? FullTextCellEditor : undefined,
+            cellEditorPopup: usesFullTextEditor ? true : undefined,
+            cellEditorParams: usesFullTextEditor ? undefined : { useFormatter: true },
+            cellStyle: (params: any) => isDirtyCell(params.data, col.name) ? { backgroundColor: 'rgba(245, 158, 11, 0.2)' } : undefined,
+            ...getColumnSizing(col, data?.rows || []),
+        };
+    }), [
+        data?.columns,
+        data?.rows,
+        editableColumnSet,
+        editableEnabled,
+        onNotify,
+        primaryKeySet,
+    ]);
 
     if (!data) return <div className="placeholder">Run a query to see results.</div>;
 
@@ -631,21 +940,6 @@ const ResultsTab = ({ data, theme, onOpenChartBuilder, allowCsvExport }: { data:
             </div>
         );
     }
-
-    const isDirtyCell = (row: any, colName: string): boolean => {
-        if (!editableEnabled) return false;
-        const rowKey = makeRowKey(row);
-        if (!rowKey) return false;
-        const key = rowKeyString(rowKey);
-        return !!pendingEdits[key]?.changes[colName];
-    };
-
-    const colDefs: ColDef[] = data.columns.map((col: any) => ({
-        field: col.name,
-        headerName: col.name,
-        editable: editableEnabled && editableColumnSet.has(col.name) && !primaryKeySet.has(col.name),
-        cellStyle: (params: any) => isDirtyCell(params.data, col.name) ? { backgroundColor: 'rgba(245, 158, 11, 0.2)' } : undefined,
-    }));
 
     const defaultColDef = {
         sortable: true,
@@ -690,6 +984,21 @@ const ResultsTab = ({ data, theme, onOpenChartBuilder, allowCsvExport }: { data:
                 edits
             }
         });
+    };
+
+    const handleCellKeyDown = (params: any) => {
+        const event = params.event as KeyboardEvent | undefined;
+        if (!event || event.key.toLowerCase() !== 'c' || (!event.metaKey && !event.ctrlKey)) {
+            return;
+        }
+        if (event.shiftKey || event.altKey || isTextEditingElement(event.target)) {
+            return;
+        }
+
+        const value = formatCellValue(params.value);
+        event.preventDefault();
+        event.stopPropagation();
+        vscode.postMessage({ command: 'copyCellContent', data: { value } });
     };
 
     return (
@@ -737,16 +1046,19 @@ const ResultsTab = ({ data, theme, onOpenChartBuilder, allowCsvExport }: { data:
             </div>
             <div style={{ flex: 1, width: '100%' }}>
                 <AgGridReact
+                    ref={gridRef}
                     rowData={rowData}
                     columnDefs={colDefs}
                     defaultColDef={defaultColDef}
                     theme={theme}
                     autoSizeStrategy={autoSizeStrategy}
+                    enableCellTextSelection={false}
                     pagination={true}
                     paginationPageSize={100}
-                    singleClickEdit={editableEnabled}
+                    singleClickEdit={false}
                     stopEditingWhenCellsLoseFocus={editableEnabled}
                     undoRedoCellEditing={editableEnabled}
+                    onCellKeyDown={handleCellKeyDown}
                     onCellValueChanged={(params: any) => {
                         if (!editableEnabled) return;
                         const colName = params.colDef?.field;
@@ -758,7 +1070,7 @@ const ResultsTab = ({ data, theme, onOpenChartBuilder, allowCsvExport }: { data:
                         const key = rowKeyString(rowKey);
                         const baselineRow = baselineByKey[key];
                         const oldValue = baselineRow && colName in baselineRow ? baselineRow[colName] : params.oldValue;
-                        const newValue = params.newValue;
+                        const newValue = params.data?.[colName];
 
                         setPendingEdits((prev) => {
                             const next: Record<string, PendingRowEdit> = { ...prev };
@@ -1308,12 +1620,14 @@ const ScriptResultsView = ({
     data,
     theme,
     allowCsvExport,
-    onOpenChartBuilder
+    onOpenChartBuilder,
+    onNotify
 }: {
     data: ScriptExecutionResultData;
     theme: any;
     allowCsvExport: boolean;
     onOpenChartBuilder: () => void;
+    onNotify?: (title: string, message: string) => void;
 }) => {
     const skippedCount = data.statements.filter(s => s.status === 'skipped').length;
     const successCount = data.statements.filter(s => s.status === 'success').length;
@@ -1381,7 +1695,7 @@ const ScriptResultsView = ({
                 <div className="script-grid-section">
                     <div className="script-grid-label">Last query result:</div>
                     <div className="script-grid-wrapper">
-                        <ResultsTab data={data.lastTabularResult!} theme={theme} onOpenChartBuilder={onOpenChartBuilder} allowCsvExport={allowCsvExport} />
+                        <ResultsTab data={data.lastTabularResult!} theme={theme} onOpenChartBuilder={onOpenChartBuilder} allowCsvExport={allowCsvExport} onNotify={onNotify} />
                     </div>
                 </div>
             )}
@@ -1404,6 +1718,9 @@ const App = () => {
     const [savePreview, setSavePreview] = useState<ResultsetEditsPreview | null>(null);
     const [saveExecuting, setSaveExecuting] = useState<boolean>(false);
     const [appNotice, setAppNotice] = useState<AppNotice | null>(null);
+    const notify = useCallback((title: string, message: string) => {
+        setAppNotice({ title, message });
+    }, []);
 
     // Check View Type
     const rootElement = document.getElementById('root');
@@ -1629,13 +1946,13 @@ const App = () => {
             </div>
             <div className="content">
                 {activeTab === 'results' && queryApprovalState && <QueryApprovalView state={queryApprovalState} />}
-                {activeTab === 'results' && !queryApprovalState && scriptData && <ScriptResultsView data={scriptData} theme={activeTheme} allowCsvExport={allowCsvExport} onOpenChartBuilder={() => setActiveTab('charts')} />}
-                {activeTab === 'results' && !queryApprovalState && !scriptData && <ResultsTab data={gridData} theme={activeTheme} onOpenChartBuilder={() => setActiveTab('charts')} allowCsvExport={allowCsvExport} />}
+                {activeTab === 'results' && !queryApprovalState && scriptData && <ScriptResultsView data={scriptData} theme={activeTheme} allowCsvExport={allowCsvExport} onOpenChartBuilder={() => setActiveTab('charts')} onNotify={notify} />}
+                {activeTab === 'results' && !queryApprovalState && !scriptData && <ResultsTab data={gridData} theme={activeTheme} onOpenChartBuilder={() => setActiveTab('charts')} allowCsvExport={allowCsvExport} onNotify={notify} />}
                 {activeTab === 'charts' && (
                     <ChartsTab
                         config={chartConfig}
                         data={activeChartData}
-                        onNotify={(title, message) => setAppNotice({ title, message })}
+                        onNotify={notify}
                     />
                 )}
             </div>

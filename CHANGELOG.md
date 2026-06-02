@@ -168,3 +168,13 @@ Archive deleted schema(s) during introspection refresh
 ### Added
 - Query approval support for SecureQL connections are here!
 - Change the What's New section on the Welcome page to be autopopulated by the ChangeLog content.
+
+## [1.11.0]
+
+### Changes
+- Fixed JSON object display issues in the results grid. Thanks Pat and Harsh!
+- Updated cell editing behaviour: single-click now selects a cell, double-click opens the cell for editing.
+- Improved cell editing for JSON and text fields (scrolling).
+- Improved cell copy functionality:
+  - Single-click a cell and use cmd/ctrl + c to copy the full cell contents.
+  - Double-click to enter edit mode and copy part of the cell contents without changing the value.

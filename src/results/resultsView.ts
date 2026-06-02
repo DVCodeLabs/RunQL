@@ -67,6 +67,10 @@ export class ResultsViewProvider implements vscode.WebviewViewProvider {
                     }
                     return;
 
+                case 'copyCellContent':
+                    vscode.env.clipboard.writeText(String(message.data?.value ?? ''));
+                    return;
+
                 case 'viewReady':
                     this._updateViewForActiveDoc();
                     return;
