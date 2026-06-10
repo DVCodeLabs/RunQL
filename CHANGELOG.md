@@ -184,3 +184,10 @@ Archive deleted schema(s) during introspection refresh
 
 ### Changes
 - Bumping the version to trigger a new build due to a windows build problem.
+
+
+## [1.12.0]
+
+### Changes
+- New welcome page providing more first start information.
+- The RunQL Panel is now selected/opened by default.

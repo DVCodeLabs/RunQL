@@ -36,6 +36,12 @@ type AISettingDoc = {
     details: string;
 };
 
+type ConnectorDoc = {
+    name: string;
+    extensionId: string;
+    summary: string;
+};
+
 // Folder + default file structure that Initialize creates
 const INIT_STRUCTURE: InitStructureEntry[] = [
     { folder: '(project root)', files: ['AGENTS.md (or AGENTS_RUNQL.md)', 'README_RUNQL.md'] },
@@ -77,6 +83,43 @@ const AI_SETTINGS: AISettingDoc[] = [
         details: 'This is usually required for Azure OpenAI and OpenAI-compatible servers, and optional for Ollama if you are not using the default local URL.'
     }
 ];
+
+const OFFICIAL_CONNECTORS: ConnectorDoc[] = [
+    {
+        name: 'RunQL DuckDB Connector',
+        extensionId: 'runql.runql-duckdb',
+        summary: 'Query local DuckDB files, in-memory DuckDB databases, and MotherDuck connections.'
+    },
+    {
+        name: 'RunQL Snowflake Connector',
+        extensionId: 'runql.runql-snowflake',
+        summary: 'Connect to Snowflake warehouses for SQL workflows, schema introspection, and ERDs.'
+    },
+    {
+        name: 'RunQL BigQuery Connector',
+        extensionId: 'runql.runql-bigquery',
+        summary: 'Connect to BigQuery projects from RunQL.'
+    },
+    {
+        name: 'RunQL Databricks Connector',
+        extensionId: 'runql.runql-databricks',
+        summary: 'Connect to Databricks SQL warehouses and lakehouse data.'
+    },
+    {
+        name: 'RunQL Microsoft SQL Server Connector',
+        extensionId: 'runql.runql-mssql',
+        summary: 'Connect to Microsoft SQL Server and Azure SQL databases.'
+    }
+];
+
+const VSCODE_MARKETPLACE_CONFIG = `{
+  "extensionsGallery": {
+    "serviceUrl": "https://marketplace.visualstudio.com/_apis/public/gallery",
+    "itemUrl": "https://marketplace.visualstudio.com/items",
+    "cacheUrl": "https://vscode.blob.core.windows.net/gallery/index",
+    "controlUrl": ""
+  }
+}`;
 
 // Styles
 const styles: Record<string, React.CSSProperties> = {
@@ -126,6 +169,33 @@ const styles: Record<string, React.CSSProperties> = {
         marginLeft: 0,
         marginRight: 0
     },
+    collapsibleHeader: {
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '12px',
+        padding: 0,
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--vscode-foreground)',
+        cursor: 'pointer',
+        textAlign: 'left'
+    },
+    collapsibleTitle: {
+        fontSize: '14px',
+        fontWeight: 600,
+        margin: 0
+    },
+    collapsibleArrow: {
+        flex: '0 0 auto',
+        color: 'var(--vscode-descriptionForeground)',
+        fontSize: '13px',
+        lineHeight: 1
+    },
+    collapsibleContent: {
+        marginTop: '14px'
+    },
     statusBadge: {
         display: 'inline-block',
         padding: '4px 12px',
@@ -161,6 +231,10 @@ const styles: Record<string, React.CSSProperties> = {
     secondaryButton: {
         backgroundColor: 'var(--vscode-button-secondaryBackground)',
         color: 'var(--vscode-button-secondaryForeground)'
+    },
+    disabledButton: {
+        opacity: 0.6,
+        cursor: 'not-allowed'
     },
     folderList: {
         margin: 0,
@@ -338,6 +412,51 @@ const styles: Record<string, React.CSSProperties> = {
         color: 'var(--vscode-descriptionForeground)',
         lineHeight: 1.45
     },
+    codeBlock: {
+        margin: '10px 0 0 0',
+        padding: '12px',
+        backgroundColor: 'var(--vscode-textCodeBlock-background)',
+        border: '1px solid var(--vscode-panel-border)',
+        borderRadius: '4px',
+        overflowX: 'auto',
+        fontSize: '12px',
+        lineHeight: 1.45
+    },
+    connectorGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+        gap: '10px',
+        marginTop: '12px'
+    },
+    connectorCard: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        gap: '8px',
+        padding: '12px',
+        backgroundColor: 'var(--vscode-textCodeBlock-background)',
+        borderRadius: '4px',
+        border: '1px solid var(--vscode-panel-border)'
+    },
+    connectorName: {
+        margin: 0,
+        fontSize: '13px',
+        fontWeight: 700
+    },
+    connectorSummary: {
+        margin: 0,
+        fontSize: '12px',
+        color: 'var(--vscode-descriptionForeground)',
+        lineHeight: 1.45
+    },
+    connectorId: {
+        margin: 0,
+        fontSize: '11px',
+        fontFamily: 'var(--vscode-editor-font-family)',
+        color: 'var(--vscode-descriptionForeground)',
+        overflowWrap: 'anywhere',
+        wordBreak: 'break-word'
+    },
     bulletList: {
         margin: '10px 0 0 18px',
         padding: 0,
@@ -373,6 +492,41 @@ function StructureIcon({ kind }: { kind: StructureIconKind }) {
             />
             <path d="M9.5 1.75v2.5h2.5" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
         </svg>
+    );
+}
+
+function CollapsibleSection({
+    title,
+    children,
+    defaultOpen = false,
+    id
+}: {
+    title: string;
+    children: React.ReactNode;
+    defaultOpen?: boolean;
+    id?: string;
+}) {
+    const [isOpen, setIsOpen] = useState(defaultOpen);
+
+    return (
+        <div id={id} style={styles.card}>
+            <button
+                type="button"
+                style={styles.collapsibleHeader}
+                aria-expanded={isOpen}
+                onClick={() => setIsOpen(!isOpen)}
+            >
+                <h2 style={styles.collapsibleTitle}>{title}</h2>
+                <span style={styles.collapsibleArrow} aria-hidden="true">
+                    {isOpen ? '▾' : '▸'}
+                </span>
+            </button>
+            {isOpen && (
+                <div style={styles.collapsibleContent}>
+                    {children}
+                </div>
+            )}
+        </div>
     );
 }
 
@@ -475,11 +629,16 @@ function App() {
         vscode.postMessage({ command: 'openReadme' });
     };
 
+    const handleOpenExtensionSearch = (extensionQuery: string) => {
+        vscode.postMessage({ command: 'openExtensionSearch', extensionQuery });
+    };
+
     const step1Complete = hasWorkspace === true;
     const step2Complete = initialized === true;
     const step1Active = hasWorkspace === false;
     const step2Active = hasWorkspace === true && initialized === false;
     const isWhatsNew = mode === 'whatsNew';
+    const canUseInitializedActions = initialized === true;
 
     return (
         <div style={styles.container}>
@@ -595,9 +754,88 @@ function App() {
                 </div>
             </div>
 
-            {/* What Initialize Creates */}
+            {/* Quick Actions */}
             <div style={styles.card}>
-                <h2 style={styles.cardTitle}>What does Initialization do?</h2>
+                <h2 style={styles.cardTitle}>Quick Actions</h2>
+                <div>
+                    <button
+                        style={{
+                            ...styles.button,
+                            ...styles.primaryButton,
+                            ...(canUseInitializedActions ? {} : styles.disabledButton)
+                        }}
+                        onClick={handleAddConnection}
+                        disabled={!canUseInitializedActions}
+                        title={canUseInitializedActions ? 'Add DB Connection' : 'Initialize RunQL before adding a DB connection.'}
+                    >
+                        ➕ Add DB Connection
+                    </button>
+                    <button
+                        style={{ ...styles.button, ...styles.secondaryButton }}
+                        onClick={handleOpenSettings}
+                    >
+                        ⚙️ Open RunQL Settings
+                    </button>
+                    <button
+                        style={{
+                            ...styles.button,
+                            ...styles.secondaryButton,
+                            ...(canUseInitializedActions ? {} : styles.disabledButton)
+                        }}
+                        onClick={handleOpenReadme}
+                        disabled={!canUseInitializedActions}
+                        title={canUseInitializedActions ? 'Open README_RUNQL.md' : 'Initialize RunQL to create README_RUNQL.md.'}
+                    >
+                        📘 Open README_RUNQL.md
+                    </button>
+                </div>
+                <p style={{ ...styles.statusNote, marginBottom: 0 }}>
+                    Add a connection anytime by clicking on the RunQL icon in the left navigation panel, and clicking the + in the Explorer Panel.
+                </p>
+            </div>
+
+            <CollapsibleSection id="ai-settings-guide" title="AI Settings Guide">
+                <p style={{ ...styles.statusNote, marginBottom: '12px' }}>
+                    These are the settings that matter for AI setup in RunQL. Start with AI Source, then only fill in the settings that match that choice.
+                </p>
+                <div style={styles.settingsGrid}>
+                    {AI_SETTINGS.map((setting) => (
+                        <div key={setting.name} style={styles.settingCard}>
+                            <h3 style={styles.settingName}>{setting.name}</h3>
+                            <p style={styles.settingSummary}>{setting.summary}</p>
+                            <p style={styles.settingDetails}>{setting.details}</p>
+                        </div>
+                    ))}
+                </div>
+                <ul style={styles.bulletList}>
+                    <li>If you choose <strong>GitHub Copilot / VS Code AI</strong>, you usually only need AI Model.</li>
+                    <li>If you choose <strong>AI Extension</strong>, you usually only need AI Extension.</li>
+                    <li>If you choose <strong>Direct API</strong>, you usually need API Provider, AI Model, and sometimes API Base URL.</li>
+                </ul>
+            </CollapsibleSection>
+
+            <CollapsibleSection title="Optional VSCode Marketplace Configuration & Github Copilot">
+                <p style={styles.statusNote}>
+                    Add the VS Code Marketplace if you want to use GitHub Copilot. Official extensions for Claude Code and Codex are available in both OpenVSX and the VS Code Marketplace.  Open-source builds builds cannot ship the VSCode Marketplace as the default but you are allowed to enable it.
+                </p>
+                <p style={styles.statusNote}>
+                    To add the VS Code Marketplace, create or open <code>product.json</code>, add or merge this top-level <code>extensionsGallery</code> configuration, then restart the IDE.
+                </p>
+                <ul style={styles.bulletList}>
+                    <li><strong>macOS:</strong> <code>~/Library/Application Support/VSCodium/product.json</code></li>
+                    <li><strong>Windows:</strong> <code>%APPDATA%\VSCodium\product.json</code></li>
+                    <li><strong>Linux:</strong> <code>~/.config/VSCodium/product.json</code></li>
+                </ul>
+                <p style={{ ...styles.statusNote, marginTop: '10px' }}>
+                    If your open-source VS Code build uses a different app name, use that app folder in the same OS-specific location.
+                </p>
+                <pre style={styles.codeBlock}>
+                    <code>{VSCODE_MARKETPLACE_CONFIG}</code>
+                </pre>
+            </CollapsibleSection>
+
+            {/* What Initialize Creates */}
+            <CollapsibleSection title="What does initialization do?">
                 <div style={{ marginTop: '10px', marginBottom: '10px' }}>
                     Creates default folders and prompt files for SQL, schema, and ERD workflows.
                 </div>
@@ -638,7 +876,29 @@ function App() {
                         If <code>AGENTS.md</code> already exists, it creates <code>AGENTS_RUNQL.md</code> instead.
                     </div>
                 </div>
-            </div>
+            </CollapsibleSection>
+
+            <CollapsibleSection title="Add other DB Connectors">
+                <p style={styles.statusNote}>
+                    Install official connectors for other databases that are not included in RunQL core.
+                </p>
+                <div style={styles.connectorGrid}>
+                    {OFFICIAL_CONNECTORS.map((connector) => (
+                        <div key={connector.extensionId} style={styles.connectorCard}>
+                            <h3 style={styles.connectorName}>{connector.name}</h3>
+                            <p style={styles.connectorSummary}>{connector.summary}</p>
+                            <p style={styles.connectorId}>{connector.extensionId}</p>
+                            <button
+                                type="button"
+                                style={{ ...styles.button, ...styles.secondaryButton, marginRight: 0, marginBottom: 0 }}
+                                onClick={() => handleOpenExtensionSearch(connector.name)}
+                            >
+                                Search Extensions
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            </CollapsibleSection>
 
             {/* Documentation */}
             <div style={styles.card}>
@@ -682,54 +942,6 @@ function App() {
                     </li>
                 </ul>
             </div>
-
-            <div id="ai-settings-guide" style={styles.card}>
-                <h2 style={styles.cardTitle}>AI Settings Guide</h2>
-                <p style={{ ...styles.statusNote, marginBottom: '12px' }}>
-                    These are the settings that matter for AI setup in RunQL. Start with AI Source, then only fill in the settings that match that choice.
-                </p>
-                <div style={styles.settingsGrid}>
-                    {AI_SETTINGS.map((setting) => (
-                        <div key={setting.name} style={styles.settingCard}>
-                            <h3 style={styles.settingName}>{setting.name}</h3>
-                            <p style={styles.settingSummary}>{setting.summary}</p>
-                            <p style={styles.settingDetails}>{setting.details}</p>
-                        </div>
-                    ))}
-                </div>
-                <ul style={styles.bulletList}>
-                    <li>If you choose <strong>GitHub Copilot / VS Code AI</strong>, you usually only need AI Model.</li>
-                    <li>If you choose <strong>AI Extension</strong>, you usually only need AI Extension.</li>
-                    <li>If you choose <strong>Direct API</strong>, you usually need API Provider, AI Model, and sometimes API Base URL.</li>
-                </ul>
-            </div>
-
-            {/* Quick Actions */}
-            {initialized && (
-                <div style={styles.card}>
-                    <h2 style={styles.cardTitle}>Quick Actions</h2>
-                    <div>
-                        <button
-                            style={{ ...styles.button, ...styles.primaryButton }}
-                            onClick={handleAddConnection}
-                        >
-                            ➕ Add DB Connection
-                        </button>
-                        <button
-                            style={{ ...styles.button, ...styles.secondaryButton }}
-                            onClick={handleOpenSettings}
-                        >
-                            ⚙️ Open RunQL Settings
-                        </button>
-                        <button
-                            style={{ ...styles.button, ...styles.secondaryButton }}
-                            onClick={handleOpenReadme}
-                        >
-                            📘 Open README_RUNQL.md
-                        </button>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

@@ -144,6 +144,20 @@ export class WelcomeView {
                         vscode.commands.executeCommand('runql.openSettings');
                         break;
 
+                    case 'openExtensionSearch': {
+                        const extensionQuery = typeof message.extensionQuery === 'string' ? message.extensionQuery : '';
+                        if (!extensionQuery) {
+                            return;
+                        }
+                        await vscode.commands.executeCommand('workbench.view.extensions');
+                        try {
+                            await vscode.commands.executeCommand('workbench.extensions.search', extensionQuery);
+                        } catch (_e: unknown) {
+                            await vscode.commands.executeCommand('workbench.extensions.action.showExtensionsForQuery', extensionQuery);
+                        }
+                        break;
+                    }
+
                     case 'openFolder':
                         vscode.commands.executeCommand('vscode.openFolder');
                         break;

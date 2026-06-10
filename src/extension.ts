@@ -1378,6 +1378,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     }
   };
 
+  const focusRunQLActivityBar = async () => {
+    try {
+      await vscode.commands.executeCommand("workbench.view.extension.runql");
+    } catch (err) {
+      Logger.error("Failed to focus RunQL activity bar", err);
+    }
+  };
+
+  await focusRunQLActivityBar();
   await maybeAutoOpenWhatsNew();
 
   // Auto-open sidebar + Welcome when project is not initialized.
