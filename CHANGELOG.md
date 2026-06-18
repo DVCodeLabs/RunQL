@@ -191,3 +191,8 @@ Archive deleted schema(s) during introspection refresh
 ### Changes
 - New welcome page providing more first start information.
 - The RunQL Panel is now selected/opened by default.
+
+## [1.13.0]
+
+### Changes
+- Run SHOW, DESCRIBE, and EXPLAIN without row-limit wrapping

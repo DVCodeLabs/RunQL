@@ -15,8 +15,8 @@ export interface LimitResult {
  */
 export function isResultReturningStatement(sql: string): boolean {
     const upper = sql.trim().toUpperCase();
-    // Match SELECT, WITH (CTEs), VALUES, TABLE, SHOW, DESCRIBE, EXPLAIN
-    return /^(SELECT|WITH|VALUES|TABLE|SHOW|DESCRIBE|EXPLAIN)\b/.test(upper);
+    // Match SELECT, WITH (CTEs), VALUES, TABLE, SHOW, DESCRIBE/DESC, EXPLAIN
+    return /^(SELECT|WITH|VALUES|TABLE|SHOW|DESCRIBE|DESC|EXPLAIN)\b/.test(upper);
 }
 
 /**
@@ -24,6 +24,13 @@ export function isResultReturningStatement(sql: string): boolean {
  */
 function isCteQuery(sql: string): boolean {
     return /^\s*WITH\b/i.test(sql);
+}
+
+/**
+ * Metadata commands return rows but are not valid inside an outer SELECT wrapper.
+ */
+function isMetadataCommand(sql: string): boolean {
+    return /^\s*(SHOW|DESCRIBE|DESC|EXPLAIN)\b/i.test(sql);
 }
 
 /**
@@ -52,6 +59,12 @@ export function applyRowLimit(sql: string, maxRows: number): LimitResult {
 
     // Don't wrap non-result statements (CREATE, ALTER, INSERT, etc.)
     if (!isResultReturningStatement(sql)) {
+        return { sql, clamped: false, effectiveLimit: 0 };
+    }
+
+    // SHOW/DESCRIBE/EXPLAIN are already bounded metadata result sets for most
+    // engines, and wrapping them as a subquery makes MySQL reject the SQL.
+    if (isMetadataCommand(sql)) {
         return { sql, clamped: false, effectiveLimit: 0 };
     }
 

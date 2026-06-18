@@ -126,25 +126,36 @@ describe('sqlLimitHelper', () => {
       expect(result.sql).toContain('LIMIT 100');
     });
 
-    it('should handle SHOW statements', () => {
+    it('should not wrap SHOW statements', () => {
       const sql = 'SHOW TABLES';
       const result = applyRowLimit(sql, 100);
 
-      expect(result.sql).toContain('LIMIT 100');
+      expect(result.sql).toBe(sql);
+      expect(result.effectiveLimit).toBe(0);
     });
 
-    it('should handle DESCRIBE statements', () => {
+    it('should not wrap DESCRIBE statements', () => {
       const sql = 'DESCRIBE users';
       const result = applyRowLimit(sql, 100);
 
-      expect(result.sql).toContain('LIMIT 100');
+      expect(result.sql).toBe(sql);
+      expect(result.effectiveLimit).toBe(0);
     });
 
-    it('should handle EXPLAIN statements', () => {
+    it('should treat DESC as a result-returning metadata statement without wrapping it', () => {
+      const sql = 'DESC users';
+      const result = applyRowLimit(sql, 100);
+
+      expect(result.sql).toBe(sql);
+      expect(result.effectiveLimit).toBe(0);
+    });
+
+    it('should not wrap EXPLAIN statements', () => {
       const sql = 'EXPLAIN SELECT * FROM users';
       const result = applyRowLimit(sql, 100);
 
-      expect(result.sql).toContain('LIMIT 100');
+      expect(result.sql).toBe(sql);
+      expect(result.effectiveLimit).toBe(0);
     });
 
     it('should strip trailing semicolons before wrapping', () => {
