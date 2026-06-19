@@ -2,12 +2,19 @@ import * as vscode from 'vscode';
 import { loadSchemas, getSchemaVersion } from '../schema/schemaStore';
 import { SchemaIntrospection, TableModel } from '../core/types';
 
-interface SchemaCache {
-    version: number;
+interface ConnectionItems {
     schemas: SchemaIntrospection[];
     tableItems: vscode.CompletionItem[];
     allColumnItems: vscode.CompletionItem[];
 }
+
+interface SchemaCache {
+    version: number;
+    schemas: SchemaIntrospection[];
+    perConnection: Map<string, ConnectionItems>;
+}
+
+const ALL_CONNECTIONS_KEY = '__all__';
 
 export class DPCompletionProvider implements vscode.CompletionItemProvider {
     private cache: SchemaCache | null = null;
@@ -25,32 +32,16 @@ export class DPCompletionProvider implements vscode.CompletionItemProvider {
         // 1. Load schemas (only re-read from disk if version changed)
         const currentVersion = getSchemaVersion();
         if (!this.cache || this.cache.version !== currentVersion) {
-            const schemas = await loadSchemas();
             this.cache = {
                 version: currentVersion,
-                schemas,
-                tableItems: this.buildTableCompletions(schemas),
-                allColumnItems: this.buildAllColumnCompletions(schemas),
+                schemas: await loadSchemas(),
+                perConnection: new Map(),
             };
         }
 
-        // Filter by active connection
+        // 2. Get items scoped to the editor's connection (build & memoize on first use)
         const connectionId = this.getConnectionId(document);
-        let schemas: SchemaIntrospection[];
-        let tableItems: vscode.CompletionItem[];
-        let allColumnItems: vscode.CompletionItem[];
-
-        if (connectionId) {
-            // When filtered by connection, we need to rebuild items for the subset.
-            // This is still fast since we skip the disk read.
-            schemas = this.cache.schemas.filter(s => s.connectionId === connectionId);
-            tableItems = this.buildTableCompletions(schemas);
-            allColumnItems = this.buildAllColumnCompletions(schemas);
-        } else {
-            schemas = this.cache.schemas;
-            tableItems = this.cache.tableItems;
-            allColumnItems = this.cache.allColumnItems;
-        }
+        const { schemas, tableItems, allColumnItems } = this.getItemsForConnection(connectionId);
 
         // 2. Analyze context - get ALL text before cursor, not just current line
         const textBeforeCursor = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
@@ -58,7 +49,7 @@ export class DPCompletionProvider implements vscode.CompletionItemProvider {
 
         // CASE A: Triggered by dot '.' -> Column completion (for alias or table)
         if (linePrefix.trim().endsWith('.')) {
-            return this.provideColumnCompletions(linePrefix, schemas, allColumnItems);
+            return this.provideColumnCompletions(linePrefix, textBeforeCursor, schemas, tableItems, allColumnItems);
         }
 
         // CASE B: Keyword Context Heuristic - look at ALL text before cursor
@@ -92,6 +83,25 @@ export class DPCompletionProvider implements vscode.CompletionItemProvider {
         return undefined;
     }
 
+    private getItemsForConnection(connectionId: string | undefined): ConnectionItems {
+        const cache = this.cache!;
+        const key = connectionId ?? ALL_CONNECTIONS_KEY;
+        const existing = cache.perConnection.get(key);
+        if (existing) {
+            return existing;
+        }
+        const schemas = connectionId
+            ? cache.schemas.filter(s => s.connectionId === connectionId)
+            : cache.schemas;
+        const built: ConnectionItems = {
+            schemas,
+            tableItems: this.buildTableCompletions(schemas),
+            allColumnItems: this.buildAllColumnCompletions(schemas),
+        };
+        cache.perConnection.set(key, built);
+        return built;
+    }
+
     private buildTableCompletions(introspections: SchemaIntrospection[]): vscode.CompletionItem[] {
         const items: vscode.CompletionItem[] = [];
         const addedSchemas = new Set<string>();
@@ -111,10 +121,9 @@ export class DPCompletionProvider implements vscode.CompletionItemProvider {
                 for (const table of schema.tables) {
                     const item = new vscode.CompletionItem(table.name, vscode.CompletionItemKind.Class);
                     item.detail = `${schema.name}.${table.name} (${intro.connectionName || intro.connectionId})`;
-                    item.insertText = `${schema.name}.${table.name}`;
-                    item.filterText = table.name;
                     items.push(item);
 
+                    // Also add schema-qualified suggestion
                     if (schema.name !== 'default' && schema.name !== 'public') {
                         const qualItem = new vscode.CompletionItem(`${schema.name}.${table.name}`, vscode.CompletionItemKind.Class);
                         qualItem.detail = `Full path`;
@@ -125,8 +134,6 @@ export class DPCompletionProvider implements vscode.CompletionItemProvider {
                 for (const view of (schema.views || [])) {
                     const item = new vscode.CompletionItem(view.name, vscode.CompletionItemKind.Interface);
                     item.detail = `View: ${schema.name}.${view.name} (${intro.connectionName || intro.connectionId})`;
-                    item.insertText = `${schema.name}.${view.name}`;
-                    item.filterText = view.name;
                     items.push(item);
 
                     if (schema.name !== 'default' && schema.name !== 'public') {
@@ -142,33 +149,33 @@ export class DPCompletionProvider implements vscode.CompletionItemProvider {
 
     private provideColumnCompletions(
         linePrefix: string,
+        textBeforeCursor: string,
         introspections: SchemaIntrospection[],
+        tableItems: vscode.CompletionItem[],
         allColumnItems: vscode.CompletionItem[],
     ): vscode.CompletionItem[] {
         const items: vscode.CompletionItem[] = [];
-
-        // 1. Try specific match first (if we have a prefix match)
         const match = linePrefix.match(/([a-zA-Z0-9_]+)\.$/);
 
         if (match) {
-            const aliasOrTable = match[1];
+            const aliasOrTable = match[1].toLowerCase();
+            const resolved = this.resolveAlias(textBeforeCursor, aliasOrTable) ?? aliasOrTable;
 
+            // 1. Prefix matches a table/view name (after alias resolution) -> columns of that table
             for (const intro of introspections) {
                 for (const schema of intro.schemas) {
-                    // Check if alias matches table or view name directly
-                    const table = schema.tables.find(t => t.name.toLowerCase() === aliasOrTable.toLowerCase())
-                        || (schema.views || []).find(v => v.name.toLowerCase() === aliasOrTable.toLowerCase());
+                    const table = schema.tables.find(t => t.name.toLowerCase() === resolved)
+                        || (schema.views || []).find(v => v.name.toLowerCase() === resolved);
                     if (table) {
                         items.push(...this.columnsToItems(table));
                     }
                 }
             }
 
-            // 1b. Check if prefix matches a SCHEMA name (e.g. "data_cache.")
+            // 2. Prefix matches a schema name (e.g. "data_cache.") -> tables and views in that schema
             for (const intro of introspections) {
                 for (const schema of intro.schemas) {
-                    if (schema.name.toLowerCase() === aliasOrTable.toLowerCase()) {
-                        // Found schema match -> return Tables and Views
+                    if (schema.name.toLowerCase() === aliasOrTable) {
                         for (const table of schema.tables) {
                             const item = new vscode.CompletionItem(table.name, vscode.CompletionItemKind.Class);
                             item.detail = `Table in ${schema.name}`;
@@ -182,12 +189,46 @@ export class DPCompletionProvider implements vscode.CompletionItemProvider {
                     }
                 }
             }
+
+            if (items.length > 0) {
+                return items;
+            }
         }
 
-        // 2. ALWAYS include all columns (e.g. for "t." -> "col" even if alias resolution fails)
-        items.push(...allColumnItems);
+        // 3. Fallback: prefix didn't resolve, offer everything so the user's typing can filter
+        return [...tableItems, ...allColumnItems];
+    }
 
-        return items;
+    private static readonly ALIAS_STOP_WORDS = new Set([
+        'WHERE', 'ORDER', 'GROUP', 'HAVING', 'LIMIT', 'OFFSET', 'ON', 'USING',
+        'INNER', 'LEFT', 'RIGHT', 'OUTER', 'FULL', 'CROSS', 'NATURAL', 'JOIN',
+        'AND', 'OR', 'UNION', 'INTERSECT', 'EXCEPT', 'SELECT', 'FROM', 'SET',
+        'VALUES', 'RETURNING', 'WINDOW', 'FETCH', 'FOR',
+    ]);
+
+    private resolveAlias(textBeforeCursor: string, alias: string): string | undefined {
+        // Strip comments and string literals so their contents can't masquerade as FROM/JOIN clauses.
+        const sanitized = textBeforeCursor
+            .replace(/--[^\n]*/g, ' ')
+            .replace(/\/\*[\s\S]*?\*\//g, ' ')
+            .replace(/'(?:[^']|'')*'/g, "''");
+
+        const re = /\b(?:FROM|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)(?:\s+(?:AS\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?/gi;
+        let m: RegExpExecArray | null;
+        let resolved: string | undefined;
+        while ((m = re.exec(sanitized)) !== null) {
+            const tableBare = m[1].split('.').pop()!.toLowerCase();
+            const candidateAlias = m[2];
+            const explicitAlias = candidateAlias && !DPCompletionProvider.ALIAS_STOP_WORDS.has(candidateAlias.toUpperCase())
+                ? candidateAlias.toLowerCase()
+                : undefined;
+            const effective = explicitAlias ?? tableBare;
+            if (effective === alias) {
+                // Later occurrences (e.g. inside a subquery the user is now editing) win.
+                resolved = tableBare;
+            }
+        }
+        return resolved;
     }
 
     private buildAllColumnCompletions(introspections: SchemaIntrospection[]): vscode.CompletionItem[] {
