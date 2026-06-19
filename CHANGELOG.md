@@ -196,3 +196,11 @@ Archive deleted schema(s) during introspection refresh
 
 ### Changes
 - Run SHOW, DESCRIBE, and EXPLAIN without row-limit wrapping
+
+## [1.14.0]
+
+### Changes
+- Recognize GRANT and REVOKE in the SecureQL approval precheck
+- Add coverage confirming permission commands are not row-limit wrapped.
+- Enable SQL quick suggestions by default
+- Adjust table/view completions to insert schema-qualified names while still matching on bare object names.

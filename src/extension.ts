@@ -412,7 +412,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       .replace(/^\s*(?:--[^\n]*\n\s*)+/g, '')
       .replace(/^\s*(?:\/\*[\s\S]*?\*\/\s*)+/g, '')
       .trim();
-    const match = cleaned.match(/^(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE)\b/i);
+    const match = cleaned.match(/^(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|GRANT|REVOKE)\b/i);
     return match?.[1]?.toUpperCase();
   };
 

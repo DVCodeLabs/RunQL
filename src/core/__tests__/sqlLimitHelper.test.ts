@@ -53,6 +53,19 @@ describe('sqlLimitHelper', () => {
       expect(result.clamped).toBe(false);
     });
 
+    it('should not apply limit to GRANT or REVOKE statements', () => {
+      for (const sql of [
+        "GRANT USAGE ON *.* TO 'person_account'@'%'",
+        "REVOKE USAGE ON *.* FROM 'person_account'@'%'",
+      ]) {
+        const result = applyRowLimit(sql, 100);
+
+        expect(result.sql).toBe(sql);
+        expect(result.clamped).toBe(false);
+        expect(result.effectiveLimit).toBe(0);
+      }
+    });
+
     it('should respect existing LIMIT when smaller than maxRows', () => {
       const sql = 'SELECT * FROM users LIMIT 50';
       const result = applyRowLimit(sql, 100);

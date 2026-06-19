@@ -27,7 +27,7 @@
     "erd",
     "ai"
   ],
-  "version": "1.13.0",
+  "version": "1.14.0",
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -54,6 +54,16 @@
         "when": "editorTextFocus && resourceLangId == sql"
       }
     ],
+    "configurationDefaults": {
+      "[sql]": {
+        "editor.quickSuggestions": {
+          "other": "on",
+          "comments": "off",
+          "strings": "off"
+        },
+        "editor.suggestOnTriggerCharacters": true
+      }
+    },
     "commands": [
       {
         "command": "runql.actionsMenu",

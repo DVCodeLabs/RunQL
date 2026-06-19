@@ -58,7 +58,7 @@ export class DPCompletionProvider implements vscode.CompletionItemProvider {
 
         // CASE A: Triggered by dot '.' -> Column completion (for alias or table)
         if (linePrefix.trim().endsWith('.')) {
-            return this.provideColumnCompletions(linePrefix, schemas, tableItems, allColumnItems);
+            return this.provideColumnCompletions(linePrefix, schemas, allColumnItems);
         }
 
         // CASE B: Keyword Context Heuristic - look at ALL text before cursor
@@ -111,9 +111,10 @@ export class DPCompletionProvider implements vscode.CompletionItemProvider {
                 for (const table of schema.tables) {
                     const item = new vscode.CompletionItem(table.name, vscode.CompletionItemKind.Class);
                     item.detail = `${schema.name}.${table.name} (${intro.connectionName || intro.connectionId})`;
+                    item.insertText = `${schema.name}.${table.name}`;
+                    item.filterText = table.name;
                     items.push(item);
 
-                    // Also add schema-qualified suggestion
                     if (schema.name !== 'default' && schema.name !== 'public') {
                         const qualItem = new vscode.CompletionItem(`${schema.name}.${table.name}`, vscode.CompletionItemKind.Class);
                         qualItem.detail = `Full path`;
@@ -124,6 +125,8 @@ export class DPCompletionProvider implements vscode.CompletionItemProvider {
                 for (const view of (schema.views || [])) {
                     const item = new vscode.CompletionItem(view.name, vscode.CompletionItemKind.Interface);
                     item.detail = `View: ${schema.name}.${view.name} (${intro.connectionName || intro.connectionId})`;
+                    item.insertText = `${schema.name}.${view.name}`;
+                    item.filterText = view.name;
                     items.push(item);
 
                     if (schema.name !== 'default' && schema.name !== 'public') {
@@ -140,7 +143,6 @@ export class DPCompletionProvider implements vscode.CompletionItemProvider {
     private provideColumnCompletions(
         linePrefix: string,
         introspections: SchemaIntrospection[],
-        tableItems: vscode.CompletionItem[],
         allColumnItems: vscode.CompletionItem[],
     ): vscode.CompletionItem[] {
         const items: vscode.CompletionItem[] = [];
@@ -182,10 +184,7 @@ export class DPCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
-        // 2. ALWAYS include all tables (e.g. for "public." -> "users")
-        items.push(...tableItems);
-
-        // 3. ALWAYS include all columns (e.g. for "t." -> "col" even if alias resolution fails)
+        // 2. ALWAYS include all columns (e.g. for "t." -> "col" even if alias resolution fails)
         items.push(...allColumnItems);
 
         return items;
