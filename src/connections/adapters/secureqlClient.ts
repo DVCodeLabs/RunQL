@@ -1,12 +1,22 @@
 import * as https from 'https';
 import * as http from 'http';
 import { randomUUID } from 'crypto';
-import { SecureQLKeyInfo } from '../../core/types';
+import type { QuerySchemaContext, SecureQLKeyInfo } from '../../core/types';
 
 export interface SecureQLRequestOptions {
     baseUrl: string;
     apiKey: string;
     connectionId: string | number;
+}
+
+function buildSchemaContextPayload(schemaContext?: QuerySchemaContext): Record<string, string> {
+    if (!schemaContext?.defaultSchema) {
+        return {};
+    }
+    return {
+        ...(schemaContext.defaultCatalog ? { default_catalog: schemaContext.defaultCatalog } : {}),
+        default_schema: schemaContext.defaultSchema,
+    };
 }
 
 export interface SecureQLErrorPayload {
@@ -422,7 +432,12 @@ export async function getSchema(opts: SecureQLRequestOptions): Promise<any> {
  * into the standard `{ results, log }` shape before returning, so callers don't
  * need to know about the streaming protocol.
  */
-export async function executeQuery(opts: SecureQLRequestOptions, sql: string, approvalRequestId?: string | number): Promise<any> {
+export async function executeQuery(
+    opts: SecureQLRequestOptions,
+    sql: string,
+    approvalRequestId?: string | number,
+    schemaContext?: QuerySchemaContext,
+): Promise<any> {
     const base = normalizeBaseUrl(opts.baseUrl);
     enforceHttps(base);
 
@@ -430,6 +445,7 @@ export async function executeQuery(opts: SecureQLRequestOptions, sql: string, ap
     const payload = JSON.stringify({
         sql,
         ...(approvalRequestId ? { approval_request_id: approvalRequestId } : {}),
+        ...buildSchemaContextPayload(schemaContext),
     });
 
     const headers = buildHeaders(opts.apiKey);
@@ -447,12 +463,21 @@ export async function executeQuery(opts: SecureQLRequestOptions, sql: string, ap
 export async function createQueryApprovalRequest(
     opts: SecureQLRequestOptions,
     sql: string,
+    schemaContext?: QuerySchemaContext,
 ): Promise<SecureQLApprovalRequestResponse> {
     const base = normalizeBaseUrl(opts.baseUrl);
     enforceHttps(base);
 
     const url = `${base}/v1/key/query-approval/requests`;
-    const resp = await makeRequest(url, 'POST', buildHeaders(opts.apiKey), JSON.stringify({ sql }));
+    const resp = await makeRequest(
+        url,
+        'POST',
+        buildHeaders(opts.apiKey),
+        JSON.stringify({
+            sql,
+            ...buildSchemaContextPayload(schemaContext),
+        }),
+    );
     const body = parseResponseBody(resp.body);
 
     if (resp.statusCode !== 200) {

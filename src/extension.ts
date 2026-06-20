@@ -26,6 +26,7 @@ import { setHasActiveConnection, setHasActiveSchema, setHasSimilarQueries } from
 // Schema diff
 import { registerSchemaDiffCommands } from "./schema/diffCommands";
 import { SchemaDiffContentProvider } from "./schema/diffProvider";
+import { loadSchemas } from "./schema/schemaStore";
 
 import {
   ConnectionProfile,
@@ -43,7 +44,8 @@ import {
   TableModel,
   ColumnModel,
   RoutineParameterModel,
-  QueryIndexEntry
+  QueryIndexEntry,
+  QuerySchemaContext
 } from './core/types';
 import { getAdapter, registerAdapter } from './connections/adapterFactory';
 import { setSecureQLSaveProfile } from './connections/adapterFactory';
@@ -181,7 +183,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     try {
       const profiles = await loadConnectionProfiles();
       connectionNameCache.clear();
-      profiles.forEach(p => connectionNameCache.set(p.id, p.name));
+      profiles.forEach(p => {
+        connectionNameCache.set(p.id, p.name);
+      });
 
       if (profiles.length > 0) {
         firstConnectionId = profiles[0].id;
@@ -309,6 +313,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     profile: ConnectionProfile;
     secrets: ConnectionSecrets;
     userSql: string;
+    schemaContext?: QuerySchemaContext;
     selection?: vscode.Range;
     requestId: string;
     startedAt: number;
@@ -318,6 +323,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
   };
 
   const approvalPollersByDocUri = new Map<string, QueryApprovalPoller>();
+
+  const getSchemaContextForDocUri = (
+    docUri: vscode.Uri,
+  ): QuerySchemaContext | undefined => {
+    const doc = vscode.workspace.textDocuments.find((document) => document.uri.toString() === docUri.toString());
+    return doc ? codeLensStore.getSchemaContext(doc) : undefined;
+  };
+
+  const savedSchemaContextIsAvailable = async (
+    connectionId: string,
+    schemaName: string,
+    catalogName?: string | null,
+  ): Promise<boolean> => {
+    const allSchemas = await loadSchemas();
+    const schemaInfo = allSchemas.find((schema) => schema.connectionId === connectionId);
+    return Boolean(schemaInfo?.schemas.some((schema) =>
+      schema.name === schemaName && (schema.catalog ?? null) === (catalogName ?? null),
+    ));
+  };
 
   const isApprovalRequiredError = (error: unknown): error is SecureQLApprovalRequiredError => {
     const candidate = error as SecureQLApprovalRequiredError | undefined;
@@ -537,6 +561,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     secrets: ConnectionSecrets,
     sql: string,
     bypassLimit = false,
+    schemaContext = getSchemaContextForDocUri(docUri),
   ) => {
     const adapter = getAdapter(profile.dialect);
     const config = vscode.workspace.getConfiguration('runql');
@@ -552,6 +577,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       const scriptResult: ScriptExecutionResult = await executeScript(statements, adapter, profile, secrets, {
         maxRows: maxRowsLimit,
         bypassLimit,
+        schemaContext,
       });
 
       lastRunContextByDocUri.set(docUri.toString(), {
@@ -591,7 +617,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       userSql: sql,
     });
 
-    const results = await adapter.runQuery(profile, secrets, limitResult.sql, { maxRows: limitResult.effectiveLimit });
+    const results = await adapter.runQuery(profile, secrets, limitResult.sql, {
+      maxRows: limitResult.effectiveLimit,
+      schemaContext,
+    });
     results.meta = await buildResultMeta(profile, docUri, sql, results.columns);
     resultsViewProvider.postMessage(docUri, 'setAllowCsvExport', profile.allowCsvExport ?? true);
     resultsViewProvider.postMessage(docUri, 'updateResults', results);
@@ -791,6 +820,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     secrets: ConnectionSecrets,
     userSql: string,
     error: SecureQLApprovalRequiredError,
+    schemaContext?: QuerySchemaContext,
   ) => {
     if (!profile.secureqlBaseUrl || !profile.secureqlConnectionId || !secrets.apiKey) {
       vscode.window.showErrorMessage('Submitted for approval, but RunQL could not start status checking because SecureQL connection metadata is incomplete.');
@@ -809,6 +839,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       profile,
       secrets,
       userSql,
+      schemaContext,
       requestId: String(error.approval.request_id),
       startedAt: Date.now(),
       consecutiveFailures: 0,
@@ -839,6 +870,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     profile: ConnectionProfile,
     secrets: ConnectionSecrets,
     userSql: string,
+    schemaContext?: QuerySchemaContext,
     selection?: vscode.Range,
   ) => {
     if (!profile.secureqlBaseUrl || !profile.secureqlConnectionId || !secrets.apiKey) {
@@ -856,6 +888,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       profile,
       secrets,
       userSql,
+      schemaContext,
       selection,
       requestId: '',
       startedAt: Date.now(),
@@ -882,7 +915,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
         return;
       }
       try {
-        const response = await createQueryApprovalRequest(poller.opts, getCurrentApprovalSql(poller));
+        const response = await createQueryApprovalRequest(
+          poller.opts,
+          getCurrentApprovalSql(poller),
+          poller.schemaContext,
+        );
         poller.requestId = String(response.request_id);
         poller.startedAt = Date.now();
         poller.stopped = false;
@@ -901,7 +938,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
         if (isServerNoApprovalRequiredError(error)) {
           const sql = getCurrentApprovalSql(poller);
           try {
-            await runSqlWithoutApproval(docUri, poller.profile, poller.secrets, sql);
+            await runSqlWithoutApproval(docUri, poller.profile, poller.secrets, sql, false, poller.schemaContext);
             vscode.window.showInformationMessage('SecureQL did not require approval, so the query was run.');
           } catch (runError) {
             const message = runError instanceof Error ? runError.message : String(runError);
@@ -933,6 +970,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
         const results = await adapter.runQuery(poller.profile, poller.secrets, sql, {
           maxRows: 0,
           approvalRequestId: poller.requestId,
+          schemaContext: poller.schemaContext,
         });
         results.meta = await buildResultMeta(poller.profile, poller.docUri, sql, results.columns);
         removeApprovalPoller(poller.docUri);
@@ -1207,7 +1245,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     return "Loading...";
   };
 
-  const codeLensProvider = new DPSqlCodelensProvider(codeLensStore, getConnectionLabel);
+  const getSchemaContextLabel = (document: vscode.TextDocument, connectionId?: string) => {
+    const effectiveId = getEffectiveConnectionId(connectionId);
+    if (!effectiveId) {
+      return undefined;
+    }
+    const schemaContext = codeLensStore.getSchemaContext(document);
+    return schemaContext?.defaultCatalog
+      ? `${schemaContext.defaultCatalog}.${schemaContext.defaultSchema}`
+      : (schemaContext?.defaultSchema ?? 'None');
+  };
+
+  const codeLensProvider = new DPSqlCodelensProvider(
+    codeLensStore,
+    getConnectionLabel,
+    getSchemaContextLabel,
+  );
 
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider({ language: "sql" }, codeLensProvider)
@@ -1477,6 +1530,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       // Persist to queryIndex for active editor
       const editor = vscode.window.activeTextEditor;
       if (editor && isSqlDoc(editor.document)) {
+        await codeLensStore.clearSchemaContext(editor.document);
         await queryIndex.updateConnectionContext(editor.document.uri, profile.id, profile.name, resolveEffectiveSqlDialect(profile));
       }
 
@@ -1516,6 +1570,66 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     vscode.commands.registerCommand("runql.query.createSqlFile", async () => {
       const { createSqlFile } = require('./queryLibrary/createSqlFile');
       await createSqlFile(context);
+    }),
+    vscode.commands.registerCommand("runql.query.saveSqlFile", async (uri?: vscode.Uri) => {
+      const sourceEditor = vscode.window.activeTextEditor;
+      const doc = uri
+        ? await vscode.workspace.openTextDocument(uri)
+        : sourceEditor?.document;
+
+      if (!doc || !isSqlDoc(doc)) {
+        vscode.window.showWarningMessage("RunQL: Open a SQL editor before saving a query.");
+        return;
+      }
+
+      if (!doc.getText().trim()) {
+        vscode.window.showWarningMessage("RunQL: There is no SQL to save.");
+        return;
+      }
+
+      const docConnectionId = codeLensStore.get(doc);
+      const connectionId = getEffectiveConnectionId(docConnectionId);
+      const schemaContext = codeLensStore.getSchemaContext(doc);
+      const sourceUri = doc.uri;
+      const sourceViewColumn = sourceEditor?.document.uri.toString() === sourceUri.toString()
+        ? sourceEditor.viewColumn
+        : undefined;
+      const { saveSqlFile } = require('./queryLibrary/createSqlFile');
+      const savedUri: vscode.Uri | undefined = await saveSqlFile(context, doc, connectionId, schemaContext);
+
+      if (!savedUri) {
+        return;
+      }
+
+      if (
+        sourceUri.toString() !== savedUri.toString()
+        && vscode.window.activeTextEditor?.document.uri.toString() === sourceUri.toString()
+      ) {
+        try {
+          await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+        } catch (err) {
+          Logger.warn('Failed to close source editor after saving query', err);
+        }
+      }
+
+      const savedDoc = await vscode.workspace.openTextDocument(savedUri);
+      await vscode.window.showTextDocument(savedDoc, {
+        viewColumn: sourceViewColumn,
+        preview: false,
+      });
+
+      if (connectionId) {
+        await codeLensStore.set(savedDoc, connectionId);
+      }
+      if (schemaContext?.defaultSchema) {
+        await codeLensStore.setSchemaContext(savedDoc, schemaContext);
+      } else {
+        await codeLensStore.clearSchemaContext(savedDoc);
+      }
+
+      codeLensProvider.refresh();
+      savedQueriesProvider.refresh();
+      vscode.window.showInformationMessage(`RunQL: Saved query "${savedUri.fsPath.split(/[\\/]/).pop() ?? 'query.sql'}".`);
     }),
     vscode.commands.registerCommand("runql.query.renameBundle", async (uri?: vscode.Uri) => {
       const { renameQueryBundle } = require('./queryLibrary/renameQueryBundle');
@@ -1770,12 +1884,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       cancellable: true
     }, async (_progress, _token) => {
       let secrets: ConnectionSecrets | undefined;
+      let schemaContext: QuerySchemaContext | undefined;
       try {
         const { ensureConnectionSecrets } = require('./connections/connectionCommands');
         secrets = await ensureConnectionSecrets(profile);
         if (!secrets) return; // User cancelled
 
         const secureqlKeyInfo = await refreshSecureQLApprovalPolicyForRun(profile, secrets);
+        schemaContext = codeLensStore.getSchemaContext(editor.document);
 
         const adapter = getAdapter(profile.dialect);
         const config = vscode.workspace.getConfiguration('runql');
@@ -1787,6 +1903,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
             profile,
             secrets,
             text,
+            schemaContext,
             selection.isEmpty ? undefined : new vscode.Range(selection.start, selection.end),
           );
           return;
@@ -1799,6 +1916,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
             maxRows: maxRowsLimit,
             bypassLimit,
             secureqlKeyInfo,
+            schemaContext,
           });
 
           lastRunContextByDocUri.set(docUri.toString(), {
@@ -1849,6 +1967,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
           const results = await adapter.runQuery(profile, secrets, limitResult.sql, {
             maxRows: limitResult.effectiveLimit,
             secureqlKeyInfo,
+            schemaContext,
           });
           results.meta = await buildResultMeta(profile, docUri, text, results.columns);
 
@@ -1877,7 +1996,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
         }
       } catch (e: unknown) {
         if (isApprovalRequiredError(e) && secrets) {
-          startApprovalPolling(docUri, profile, secrets, text, e);
+          startApprovalPolling(docUri, profile, secrets, text, e, schemaContext);
           return;
         }
         const msg = e instanceof Error ? e.message : String(e);
@@ -2361,7 +2480,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
         const exists = await getConnection(entry.connectionId);
         if (exists) {
           // Connection still exists - restore it to the CodeLens store (no change to queryIndex)
-          codeLensStore.set(editor.document, entry.connectionId);
+          await codeLensStore.set(editor.document, entry.connectionId);
+          if (
+            entry.schemaContext
+            && await savedSchemaContextIsAvailable(entry.connectionId, entry.schemaContext, entry.catalogContext)
+          ) {
+            await codeLensStore.setSchemaContext(editor.document, {
+              ...(entry.catalogContext ? { defaultCatalog: entry.catalogContext } : {}),
+              defaultSchema: entry.schemaContext,
+            });
+          } else {
+            await codeLensStore.clearSchemaContext(editor.document);
+          }
           codeLensProvider.refresh();
         } else {
           // Stored connection no longer exists - fallback to active connection

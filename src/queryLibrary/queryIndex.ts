@@ -103,8 +103,10 @@ export class QueryIndex {
                         mdTags: e.mdTags,
                         mdTitle: e.mdTitle,
                         path: e.path,
+                        catalogContext: e.catalogContext,
                         searchText: e.searchText,
                         searchUpdatedAt: e.searchUpdatedAt,
+                        schemaContext: e.schemaContext,
                         sqlHash: e.sqlHash,
                         title: e.title,
                         updatedAt: e.updatedAt
@@ -204,11 +206,15 @@ export class QueryIndex {
                 if (mdMeta.connectionId) entry.connectionId = mdMeta.connectionId;
                 if (mdMeta.connectionName) entry.connectionName = mdMeta.connectionName;
                 if (mdMeta.dialect) entry.dialect = mdMeta.dialect;
+                entry.schemaContext = mdMeta.schemaContext ?? null;
+                entry.catalogContext = mdMeta.catalogContext ?? null;
             } else {
                 entry.mdTitle = undefined;
                 entry.mdTags = undefined;
                 entry.mdSummary = undefined;
                 entry.mdBodyText = undefined;
+                entry.schemaContext = null;
+                entry.catalogContext = null;
             }
 
             // Build searchText
@@ -261,6 +267,8 @@ export class QueryIndex {
             if (mdMeta.connectionId) entry.connectionId = mdMeta.connectionId;
             if (mdMeta.connectionName) entry.connectionName = mdMeta.connectionName;
             if (mdMeta.dialect) entry.dialect = mdMeta.dialect;
+            entry.schemaContext = mdMeta.schemaContext ?? null;
+            entry.catalogContext = mdMeta.catalogContext ?? null;
 
             // Re-read SQL text for searchText rebuild
             let sqlText = '';
@@ -304,6 +312,8 @@ export class QueryIndex {
         entry.mdTags = undefined;
         entry.mdSummary = undefined;
         entry.mdBodyText = undefined;
+        entry.schemaContext = null;
+        entry.catalogContext = null;
         // Rebuild searchText without md fields
         entry.searchText = buildSearchText({
             title: entry.title,

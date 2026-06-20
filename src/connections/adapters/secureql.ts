@@ -21,8 +21,9 @@ import { normalizeConnectionType, normalizeProfileConnectionType } from '../conn
 // ── Request options helpers ─────────────────────────────────────────────────
 
 /**
- * Build request options, auto-resolving connection ID from the API key if not already set.
- * This handles the case where users skip the "Validate API Key" action.
+ * Build request options, resolving the SecureQL connection ID from the API key.
+ * This handles the case where users skip the "Validate API Key" action or
+ * replace the API key on an existing RunQL connection.
  *
  * Always refreshes the allow_csv_export flag from the server so admin
  * changes take effect on the next query or schema refresh without
@@ -43,10 +44,7 @@ async function resolveAndBuildRequestOptions(
     // for this operation.
     const info = keyInfo ?? await getKeyInfo(baseUrl, apiKey);
 
-    // Auto-resolve connection ID if not yet set
-    if (!profile.secureqlConnectionId) {
-        profile.secureqlConnectionId = String(info.connection_id);
-    }
+    profile.secureqlConnectionId = String(info.connection_id);
     if (profile.secureqlTargetDbms !== info.dbms) {
         profile.secureqlTargetDbms = info.dbms;
     }
@@ -388,7 +386,7 @@ export class SecureQLAdapter implements DbAdapter {
     ): Promise<QueryResult> {
         const opts = await resolveAndBuildRequestOptions(profile, secrets, options.secureqlKeyInfo);
         this.persistProfile(profile);
-        const raw = await executeQuery(opts, sql, options.approvalRequestId);
+        const raw = await executeQuery(opts, sql, options.approvalRequestId, options.schemaContext);
         return mapQueryResponse(raw);
     }
 

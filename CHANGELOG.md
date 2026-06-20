@@ -204,3 +204,17 @@ Archive deleted schema(s) during introspection refresh
 - Add coverage confirming permission commands are not row-limit wrapped.
 - Enable SQL quick suggestions by default
 - Adjust table/view completions to insert schema-qualified names while still matching on bare object names.
+
+## [1.15.0]
+
+### Changes
+
+- Add RunQL query save buttons with Cmd+Shift+S, editor title/CodeLens actions, overwrite-or-copy handling, companion markdown metadata, and query index refreshes.
+- Persist schema context per SQL query, surface it in CodeLens, restore it from saved query metadata, and pass catalog/schema context through query runs, scripts, approvals when using SecureQL.
+- Store schema/catalog context in saved query metadata and schema snapshots.
+- Refresh stale SecureQL connection IDs when API keys change for a connection.
+- Reorder RunQL panels in the IDE so that Results, ERD, Query History, and Markdown appear consistently and upfront for users.
+- Revert table/view completions to insert bare object names (the forced schema-qualified insert from the prior commit was overriding common typing patterns).
+- Scope dot-trigger completions: alias/table prefix returns only that table's columns, schema prefix returns only that schema's tables/views, unknown prefix falls back to all tables + all columns.
+- Resolve real FROM/JOIN aliases (including bare table references) so "u.<TAB>" after "FROM users u" returns columns of users.
+- Cache completion items per connection in the completion provider so keystrokes don't rebuild the table/column item arrays.

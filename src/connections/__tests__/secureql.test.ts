@@ -90,6 +90,15 @@ describe('SecureQLAdapter', () => {
             expect(profile.connectionType).toBe('data_access');
         });
 
+        it('refreshes a stale secureqlConnectionId when the API key changes', async () => {
+            const adapter = new SecureQLAdapter();
+            const profile = makeProfile({ secureqlConnectionId: '999' });
+            await adapter.testConnection(profile, TEST_SECRETS);
+
+            expect(profile.secureqlConnectionId).toBe('123');
+            expect(mockedGetSchema).toHaveBeenCalledWith(expect.objectContaining({ connectionId: '123' }));
+        });
+
         it('syncs db_admin metadata with nullable database_name', async () => {
             mockedGetKeyInfo.mockResolvedValue({
                 ...KEY_INFO_RESPONSE,
@@ -194,6 +203,24 @@ describe('SecureQLAdapter', () => {
                 expect.objectContaining({ connectionId: '123' }),
                 'SELECT 1',
                 undefined,
+                undefined,
+            );
+        });
+
+        it('passes schema context to SecureQL query execution', async () => {
+            const adapter = new SecureQLAdapter();
+            const profile = makeProfile();
+
+            await adapter.runQuery(profile, TEST_SECRETS, 'SELECT * FROM users', {
+                maxRows: 100,
+                schemaContext: { defaultCatalog: 'appdb', defaultSchema: 'public' },
+            });
+
+            expect(mockedExecuteQuery).toHaveBeenCalledWith(
+                expect.objectContaining({ connectionId: '123' }),
+                'SELECT * FROM users',
+                undefined,
+                { defaultCatalog: 'appdb', defaultSchema: 'public' },
             );
         });
 

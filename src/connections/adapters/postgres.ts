@@ -82,12 +82,15 @@ export class PostgresAdapter implements DbAdapter {
     profile: ConnectionProfile,
     secrets: ConnectionSecrets,
     sql: string,
-    _options: QueryRunOptions,
+    options: QueryRunOptions,
   ): Promise<QueryResult> {
     const { client, cleanup } = await this.createConnectedClient(profile, secrets);
     const start = Date.now();
     try {
       await client.connect();
+      if (options.schemaContext?.defaultSchema) {
+        await client.query(`SET search_path TO ${quotePostgresIdentifier(options.schemaContext.defaultSchema)}`);
+      }
 
       // Basic implementation without fancy options for now
       const res = await client.query(sql); // pg returns rows, fields
@@ -390,4 +393,8 @@ export class PostgresAdapter implements DbAdapter {
     });
     return { client, cleanup: () => {} };
   }
+}
+
+function quotePostgresIdentifier(identifier: string): string {
+  return `"${identifier.replace(/"/g, '""')}"`;
 }

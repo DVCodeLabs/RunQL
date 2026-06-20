@@ -7,13 +7,22 @@
  */
 
 import { DbAdapter } from '../connections/adapters/adapter';
-import { ConnectionProfile, ConnectionSecrets, QueryResult, ScriptStatementResult, ScriptExecutionResult } from './types';
+import {
+    ConnectionProfile,
+    ConnectionSecrets,
+    QueryResult,
+    QueryRunOptions,
+    ScriptStatementResult,
+    ScriptExecutionResult,
+} from './types';
 import { SplitStatement } from './sqlSplitter';
 import { applyRowLimit, isResultReturningStatement } from './sqlLimitHelper';
 
 export interface ScriptRunOptions {
     maxRows: number;
     bypassLimit: boolean;
+    secureqlKeyInfo?: QueryRunOptions['secureqlKeyInfo'];
+    schemaContext?: QueryRunOptions['schemaContext'];
 }
 
 export async function executeScript(
@@ -58,6 +67,8 @@ export async function executeScript(
 
             const result = await adapter.runQuery(profile, secrets, sqlToRun, {
                 maxRows: effectiveLimit,
+                secureqlKeyInfo: options.secureqlKeyInfo,
+                schemaContext: options.schemaContext,
             });
 
             const elapsedMs = Date.now() - startTime;

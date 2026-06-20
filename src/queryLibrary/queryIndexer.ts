@@ -19,6 +19,8 @@ export interface QueryIndexEntry {
   connectionId?: string | null;
   connectionName?: string | null;
   dialect?: string | null;
+  schemaContext?: string | null;
+  catalogContext?: string | null;
   lastRunAt?: string | null;
 
   // Search metadata (derived from companion markdown)

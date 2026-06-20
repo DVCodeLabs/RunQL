@@ -60,6 +60,9 @@ function normalizeSchemaModel(rawSchema: Record<string, unknown>): SchemaModel {
 
   return {
     name: String(rawSchema?.name ?? ''),
+    catalog: typeof rawSchema?.catalog === 'string' && rawSchema.catalog.trim()
+      ? rawSchema.catalog
+      : undefined,
     tables,
     views,
     procedures,

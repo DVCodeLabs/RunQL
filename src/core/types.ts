@@ -30,6 +30,11 @@ export interface SecureQLKeyInfo {
     };
 }
 
+export interface QuerySchemaContext {
+    defaultCatalog?: string;
+    defaultSchema: string;
+}
+
 export interface DPProviderDescriptor {
     providerId: string;
     displayName: string;
@@ -214,6 +219,7 @@ export interface QueryRunOptions {
     timeoutMs?: number;
     approvalRequestId?: string | number;
     secureqlKeyInfo?: SecureQLKeyInfo;
+    schemaContext?: QuerySchemaContext;
 }
 
 export interface QueryColumn {
@@ -383,6 +389,7 @@ export interface SchemaIntrospection {
 
 export interface SchemaModel {
     name: string;                 // schema name (or dataset)
+    catalog?: string;             // database/project/catalog for engines that expose one
     tables: TableModel[];
     views?: TableModel[];         // database views (separate from tables)
     procedures?: RoutineModel[];
@@ -497,6 +504,8 @@ export interface QueryIndexEntry {
     sqlHash: string;              // sha256(canonicalSql)
     dialectHint?: DbDialect;      // optional
     tables?: string[];            // best-effort
+    schemaContext?: string | null;
+    catalogContext?: string | null;
     updatedAt: string;            // ISO
 }
 

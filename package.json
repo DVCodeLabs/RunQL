@@ -27,7 +27,7 @@
     "erd",
     "ai"
   ],
-  "version": "1.14.0",
+  "version": "1.15.0",
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -51,6 +51,11 @@
       {
         "command": "runql.query.runCurrentStatement",
         "key": "shift+cmd+enter",
+        "when": "editorTextFocus && resourceLangId == sql"
+      },
+      {
+        "command": "runql.query.saveSqlFile",
+        "key": "shift+cmd+s",
         "when": "editorTextFocus && resourceLangId == sql"
       }
     ],
@@ -160,6 +165,11 @@
           "dark": "media/icons/lucide/dark/file-plus.svg",
           "light": "media/icons/lucide/light/file-plus.svg"
         }
+      },
+      {
+        "command": "runql.query.saveSqlFile",
+        "title": "RunQL: Save Query",
+        "icon": "$(save)"
       },
       {
         "command": "runql.query.run",
@@ -623,7 +633,12 @@
         {
           "command": "runql.query.run",
           "when": "resourceLangId == sql",
-          "group": "navigation"
+          "group": "navigation@2"
+        },
+        {
+          "command": "runql.query.saveSqlFile",
+          "when": "resourceLangId == sql",
+          "group": "navigation@1"
         },
         {
           "command": "runql.query.openMarkdownDoc",

@@ -98,12 +98,15 @@ export class MySQLAdapter implements DbAdapter {
         profile: ConnectionProfile,
         secrets: ConnectionSecrets,
         sql: string,
-        _options: QueryRunOptions
+        options: QueryRunOptions
     ): Promise<QueryResult> {
         // Force rowsAsArray to true for runQuery to match QueryResult.rows structure (array of arrays)
         const { conn, cleanup } = await this.createConnectedClient(profile, secrets, true);
         const start = Date.now();
         try {
+            if (options.schemaContext?.defaultSchema) {
+                await conn.query(`USE ${quoteMysqlIdentifier(options.schemaContext.defaultSchema)}`);
+            }
             const [rows, fields] = await conn.execute(sql);
             const elapsedMs = Date.now() - start;
 
@@ -617,4 +620,8 @@ export class MySQLAdapter implements DbAdapter {
         const conn = await mysql.createConnection(connOpts);
         return { conn, cleanup: () => {} };
     }
+}
+
+function quoteMysqlIdentifier(identifier: string): string {
+    return `\`${identifier.replace(/`/g, '``')}\``;
 }

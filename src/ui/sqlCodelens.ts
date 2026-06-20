@@ -1,8 +1,13 @@
 import * as vscode from "vscode";
 
 type ConnectionId = string;
+export interface DocSchemaContext {
+    defaultSchema: string;
+    defaultCatalog?: string;
+}
 
 const STATE_KEY = "runql.docConnections.v1";
+const SCHEMA_CONTEXT_STATE_KEY = "runql.docSchemaContexts.v1";
 
 function getDocKey(doc: vscode.TextDocument) {
     return doc.uri.toString();
@@ -10,17 +15,28 @@ function getDocKey(doc: vscode.TextDocument) {
 
 export class DPDocConnectionStore {
     private mem = new Map<string, ConnectionId>();
+    private schemaContexts = new Map<string, DocSchemaContext>();
     constructor(private workspaceState: vscode.Memento) { }
 
     loadFromWorkspaceState() {
         const saved = this.workspaceState.get<Record<string, ConnectionId>>(STATE_KEY, {});
         for (const [k, v] of Object.entries(saved)) this.mem.set(k, v);
+        const savedSchemaContexts = this.workspaceState.get<Record<string, DocSchemaContext>>(SCHEMA_CONTEXT_STATE_KEY, {});
+        for (const [k, v] of Object.entries(savedSchemaContexts)) {
+            if (v?.defaultSchema) this.schemaContexts.set(k, v);
+        }
     }
 
     private persist() {
         const obj: Record<string, ConnectionId> = {};
         for (const [k, v] of this.mem.entries()) obj[k] = v;
         return this.workspaceState.update(STATE_KEY, obj);
+    }
+
+    private persistSchemaContexts() {
+        const obj: Record<string, DocSchemaContext> = {};
+        for (const [k, v] of this.schemaContexts.entries()) obj[k] = v;
+        return this.workspaceState.update(SCHEMA_CONTEXT_STATE_KEY, obj);
     }
 
     get(doc: vscode.TextDocument): ConnectionId | undefined {
@@ -36,6 +52,20 @@ export class DPDocConnectionStore {
         this.mem.delete(getDocKey(doc));
         await this.persist();
     }
+
+    getSchemaContext(doc: vscode.TextDocument): DocSchemaContext | undefined {
+        return this.schemaContexts.get(getDocKey(doc));
+    }
+
+    async setSchemaContext(doc: vscode.TextDocument, context: DocSchemaContext) {
+        this.schemaContexts.set(getDocKey(doc), context);
+        await this.persistSchemaContexts();
+    }
+
+    async clearSchemaContext(doc: vscode.TextDocument) {
+        this.schemaContexts.delete(getDocKey(doc));
+        await this.persistSchemaContexts();
+    }
 }
 
 export class DPSqlCodelensProvider implements vscode.CodeLensProvider {
@@ -44,7 +74,8 @@ export class DPSqlCodelensProvider implements vscode.CodeLensProvider {
 
     constructor(
         private store: DPDocConnectionStore,
-        private getConnectionLabel: (id?: string) => string
+        private getConnectionLabel: (id?: string) => string,
+        private getSchemaContextLabel?: (document: vscode.TextDocument, connectionId?: string) => string | undefined,
     ) { }
 
     refresh() {
@@ -71,6 +102,15 @@ export class DPSqlCodelensProvider implements vscode.CodeLensProvider {
             command: "runql.sql.setConnectionForDoc",
             arguments: [document.uri]
         }));
+
+        const schemaContextLabel = this.getSchemaContextLabel?.(document, connectionId);
+        if (schemaContextLabel) {
+            lenses.push(new vscode.CodeLens(range, {
+                title: `\u00A0\u00A0$(symbol-namespace) Schema: ${schemaContextLabel} $(chevron-down)`,
+                command: "runql.sql.setSchemaContextForDoc",
+                arguments: [document.uri]
+            }));
+        }
 
         // For notebooks, we skip the rest (Explain, Comment, Doc, Run, etc.)
         // as they clutter the cell UI and have their own toolbar/status bar controls.
@@ -109,6 +149,12 @@ export class DPSqlCodelensProvider implements vscode.CodeLensProvider {
                 }));
             }
         }
+
+        lenses.push(new vscode.CodeLens(range, {
+            title: `${spacer}$(save)${smallSpacer}Save${smallSpacer}(⌘⇧S)`,
+            command: "runql.query.saveSqlFile",
+            arguments: [document.uri]
+        }));
 
         lenses.push(new vscode.CodeLens(range, {
             title: `${spacer}$(play)${smallSpacer}Run (no LIMIT)`,

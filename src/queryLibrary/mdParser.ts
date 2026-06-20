@@ -9,6 +9,8 @@ export interface MdMetadata {
     connectionId?: string;
     connectionName?: string;
     dialect?: string;
+    schemaContext?: string;
+    catalogContext?: string;
     bodyText: string;       // plain text body (after frontmatter)
     summary?: string;       // first meaningful paragraph/line
 }
@@ -45,6 +47,8 @@ export function parseMdMetadata(mdContent: string): MdMetadata {
         result.connectionId = extractFmString(fmBlock, 'connection_id');
         result.connectionName = extractFmString(fmBlock, 'connection');
         result.dialect = extractFmString(fmBlock, 'dialect');
+        result.schemaContext = extractFmString(fmBlock, 'schema_context');
+        result.catalogContext = extractFmString(fmBlock, 'catalog_context');
     } catch {
         // Tolerate parse errors — partial extraction is fine
     }
