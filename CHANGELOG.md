@@ -218,3 +218,10 @@ Archive deleted schema(s) during introspection refresh
 - Scope dot-trigger completions: alias/table prefix returns only that table's columns, schema prefix returns only that schema's tables/views, unknown prefix falls back to all tables + all columns.
 - Resolve real FROM/JOIN aliases (including bare table references) so "u.<TAB>" after "FROM users u" returns columns of users.
 - Cache completion items per connection in the completion provider so keystrokes don't rebuild the table/column item arrays.
+
+## [1.15.1]
+
+### Changes
+
+- Remove focusing the RunQL container on every IDE launch for non-RunQL IDEs and in Github Code Spaces.
+- The RunQL container will only get focused on the very first install of RunQL in non-RunQL IDEs and in Github Code Spaces.

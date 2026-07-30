@@ -83,6 +83,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
 
   const extensionVersion = String((context.extension.packageJSON as { version?: string } | undefined)?.version ?? "");
   const previousExtensionVersion = context.globalState.get<string>("runql.lastExtensionVersion");
+  const firstRunFocusMarkerKey = "runql.activityBarAutoFocused.v1";
+  const firstRunFocusMarkerAtStart = context.globalState.get<boolean>(firstRunFocusMarkerKey) === true;
+  const isRunQLIDEHost = vscode.env.uriScheme === "runql-ide";
+  let focusedRunQLActivityBarThisActivation = false;
 
   // Migrate legacy AI settings to the simplified source/provider model
   const { migrateAiProviderSetting, normalizeAiSettings, initializeAiSettingsSyncSnapshot } = await import('./ai/aiService');
@@ -1411,6 +1415,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       if (await isProjectInitialized()) return;
 
       await vscode.commands.executeCommand("workbench.view.extension.runql");
+      focusedRunQLActivityBarThisActivation = true;
       await vscode.commands.executeCommand("runql.welcome.open");
       autoWelcomeShownThisSession = true;
     } catch (err) {
@@ -1424,6 +1429,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       if (!previousExtensionVersion || !extensionVersion || previousExtensionVersion === extensionVersion) return;
 
       await vscode.commands.executeCommand("workbench.view.extension.runql");
+      focusedRunQLActivityBarThisActivation = true;
       await vscode.commands.executeCommand("runql.whatsNew.open");
       autoWhatsNewShownThisSession = true;
     } catch (err) {
@@ -1434,12 +1440,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
   const focusRunQLActivityBar = async () => {
     try {
       await vscode.commands.executeCommand("workbench.view.extension.runql");
+      focusedRunQLActivityBarThisActivation = true;
     } catch (err) {
       Logger.error("Failed to focus RunQL activity bar", err);
     }
   };
 
-  await focusRunQLActivityBar();
+  if (isRunQLIDEHost) {
+    await focusRunQLActivityBar();
+  } else if (!firstRunFocusMarkerAtStart && !previousExtensionVersion) {
+    await focusRunQLActivityBar();
+  }
   await maybeAutoOpenWhatsNew();
 
   // Auto-open sidebar + Welcome when project is not initialized.
@@ -1469,6 +1480,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
 
   if (extensionVersion && previousExtensionVersion !== extensionVersion) {
     await context.globalState.update("runql.lastExtensionVersion", extensionVersion);
+  }
+
+  if (!isRunQLIDEHost && !firstRunFocusMarkerAtStart && (previousExtensionVersion || focusedRunQLActivityBarThisActivation)) {
+    await context.globalState.update(firstRunFocusMarkerKey, true);
   }
 
   // Insert text helper used by schema tree clicks
