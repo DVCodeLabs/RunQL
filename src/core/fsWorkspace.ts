@@ -223,13 +223,18 @@ function storageModeNote(root: RunQLStorageRoot): string {
 
 function displayForDoc(root: RunQLStorageRoot): string {
   if (root.location === 'workspace') return './RunQL';
-  return root.displayPath;
+  // Normalize to forward slashes so AGENTS.md / README_RUNQL.md and
+  // the paths derived from them are consistent across Windows and
+  // POSIX. Forward slashes are accepted by all Windows APIs and by
+  // Node's path resolver, and this avoids readers (and tests) seeing
+  // a mix of separators depending on which OS wrote the file.
+  return root.displayPath.replace(/\\/g, '/');
 }
 
 function joinDisplay(base: string, sub: string): string {
-  if (base.endsWith('/') || base.endsWith('\\')) return base + sub;
-  const sep = base.includes('\\') && !base.includes('/') ? '\\' : '/';
-  return base + sep + sub;
+  const normalizedBase = base.replace(/\\/g, '/');
+  if (normalizedBase.endsWith('/')) return normalizedBase + sub;
+  return `${normalizedBase}/${sub}`;
 }
 
 // -----------------------------------------------------------------------------

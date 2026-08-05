@@ -239,3 +239,20 @@ RunQL now lets you choose where your RunQL files are stored.  You have three opt
     - Windows: %USERPROFILE%\.runql 
     - Codespaces: /workspaces/.runql 
 3. Custom path = explicit folder you control
+
+
+## [1.16.1]
+
+### Changes
+
+#### Support for developers using RunQL with multiple code projects or GitHub Codespaces.
+
+RunQL now lets you choose where your RunQL files are stored.  You have three options:
+1. Project workspace = project-specific RunQL workspace (a project directory typically used for commiting query assets)
+2. User home = one personal RunQL workspace usable across all code projects (local or Codespaces)
+    - macOS/Linux: ~/.runql
+    - Windows: %USERPROFILE%\.runql
+    - Codespaces: /workspaces/.runql
+3. Custom path = explicit folder you control
+
+Fix: Normalize doc paths to forward slashes for Windows
