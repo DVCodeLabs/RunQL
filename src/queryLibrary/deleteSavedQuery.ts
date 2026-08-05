@@ -2,14 +2,12 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { SavedQueryItem } from './savedQueriesView';
 import { ErrorHandler, ErrorSeverity, formatQueryError } from '../core/errorHandler';
+import { resolveStoredPathToExistingFile } from '../core/storageRoot';
 
 export async function deleteSavedQuery(item: SavedQueryItem | vscode.Uri) {
     if (!item) return;
 
-    if (!vscode.workspace.workspaceFolders) return;
-    const root = vscode.workspace.workspaceFolders[0].uri;
-
-    let fileUri: vscode.Uri;
+    let fileUri: vscode.Uri | undefined;
     let displayLabel: string;
 
     // Handle both SavedQueryItem (from sidebar) and Uri (from codelens)
@@ -17,11 +15,16 @@ export async function deleteSavedQuery(item: SavedQueryItem | vscode.Uri) {
         fileUri = item;
         displayLabel = path.basename(item.fsPath, '.sql');
     } else if (item.entry) {
-        fileUri = vscode.Uri.joinPath(root, item.entry.path);
-        displayLabel = item.label as string || path.basename(item.entry.path, '.sql');
+        // In multi-root workspaces the syntactic resolver picks
+        // folder[0] blindly. Probe every folder for the actual file so
+        // we don't delete the wrong workspace-folder's copy.
+        fileUri = await resolveStoredPathToExistingFile(item.entry.path);
+        displayLabel = (item.label as string) || path.basename(item.entry.path, '.sql');
     } else {
         return;
     }
+
+    if (!fileUri) return;
 
     // 1. Confirm
     const choice = await vscode.window.showWarningMessage(

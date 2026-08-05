@@ -2,6 +2,23 @@ import * as vscode from 'vscode';
 import { isProjectInitialized, updateProjectInitializedContext } from '../core/isProjectInitialized';
 import { fileExists } from '../core/fsWorkspace';
 import { ChangelogEntry, parseChangelogEntry } from './changelog';
+import {
+    tryResolveRunQLRoot,
+    onDidChangeStorageRoot,
+    StorageLocation,
+    isCodespaces,
+    validateCustomPath,
+    checkCustomPathWritable,
+    computeProspectiveRoot,
+} from '../core/storageRoot';
+import {
+    askStorageChangeAction,
+    executeStorageChangeAction,
+    postMigrationHousekeeping,
+    suppressAutoMigration,
+    markProgrammaticStorageChange,
+} from '../core/storageMigration';
+import { promptWorkspaceLinkInit, promptWorkspaceOwnerFolder } from '../core/workspaceLinkInit';
 
 type WelcomeMode = 'welcome' | 'whatsNew';
 
@@ -29,6 +46,9 @@ export class WelcomeView {
         vscode.workspace.onDidChangeWorkspaceFolders(() => {
             void this._sendStatus();
         }, null, this._disposables);
+        this._disposables.push(onDidChangeStorageRoot(() => {
+            void this._sendStatus();
+        }));
         this._panel.webview.html = this._getWebviewContent(this._panel.webview, extensionUri);
         this._setWebviewMessageListener(this._panel.webview);
     }
@@ -64,13 +84,29 @@ export class WelcomeView {
     private async _sendStatus() {
         const initialized = await isProjectInitialized();
         const hasWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
+        const cfg = vscode.workspace.getConfiguration('runql.storage');
+        const storageLocation = cfg.get<StorageLocation>('location', 'workspace');
+        const customPath = cfg.get<string>('customPath', '');
+        const userPath = cfg.get<string>('userPath', '~/.runql');
+        const codespacesPath = cfg.get<string>('codespacesPath', '/workspaces/.runql');
+        const resolved = tryResolveRunQLRoot();
         this._panel.webview.postMessage({
             command: 'setStatus',
             initialized,
             hasWorkspace,
             mode: this._mode,
             version: this._version,
-            whatsNewEntry: this._mode === 'whatsNew' ? await this._getWhatsNewEntry() : undefined
+            whatsNewEntry: this._mode === 'whatsNew' ? await this._getWhatsNewEntry() : undefined,
+            storage: {
+                location: storageLocation,
+                customPath,
+                userPath,
+                codespacesPath,
+                resolvedPath: resolved?.displayPath ?? null,
+                resolvedLocation: resolved?.location ?? null,
+                codespaces: isCodespaces(),
+                workspaceFolderCount: vscode.workspace.workspaceFolders?.length ?? 0,
+            },
         });
     }
 
@@ -99,6 +135,138 @@ export class WelcomeView {
         }
     }
 
+    /**
+     * Ask-then-commit storage-location change from the Welcome webview.
+     * Runs the migration prompt (Move/Copy/Use existing/… OR Use existing/
+     * Replace after backup/…) BEFORE applying any setting. Cancel is a
+     * true no-op — no setting change, no revert dance, and the webview's
+     * radio reverts naturally because the server-side storage.location
+     * never changed.
+     */
+    private async _handleChangeStorageLocation(
+        target: StorageLocation,
+        rawCustomPath?: string
+    ): Promise<void> {
+        const releaseSuppression = suppressAutoMigration();
+        try {
+            const cfg = vscode.workspace.getConfiguration('runql.storage');
+            const previousSettings = {
+                location: cfg.get<StorageLocation>('location', 'workspace'),
+                userPath: cfg.get<string>('userPath', '~/.runql'),
+                codespacesPath: cfg.get<string>('codespacesPath', '/workspaces/.runql'),
+                customPath: cfg.get<string>('customPath', ''),
+            };
+            const previousRoot = tryResolveRunQLRoot();
+            const settingUnchanged = target === previousSettings.location;
+
+            // For custom mode we need a valid path up front — the webview
+            // should have supplied it. Bail with a message if it hasn't.
+            let prospectiveCustomPath: string | undefined;
+            if (target === 'custom') {
+                const trimmed = (rawCustomPath ?? '').trim();
+                if (!trimmed) {
+                    vscode.window.showWarningMessage(
+                        'Enter a custom storage path in the field above and click Save.'
+                    );
+                    return;
+                }
+                const validated = validateCustomPath(trimmed);
+                if (validated.error || !validated.fsPath) {
+                    vscode.window.showErrorMessage(
+                        validated.error?.message ?? 'Custom RunQL storage path is invalid.'
+                    );
+                    return;
+                }
+                const writeErr = await checkCustomPathWritable(validated.fsPath);
+                if (writeErr) {
+                    vscode.window.showErrorMessage(writeErr.message);
+                    return;
+                }
+                prospectiveCustomPath = validated.fsPath;
+            }
+
+            const prospectiveNextRoot = computeProspectiveRoot(target, {
+                customPath: prospectiveCustomPath ?? previousSettings.customPath,
+                userPath: previousSettings.userPath,
+                codespacesPath: previousSettings.codespacesPath,
+            });
+            if (!prospectiveNextRoot) {
+                vscode.window.showWarningMessage(
+                    target === 'workspace'
+                        ? 'Open a folder before switching to workspace storage.'
+                        : 'Cannot resolve the new storage root. Check the storage path settings.'
+                );
+                return;
+            }
+
+            let choice: 'move' | 'copy' | 'use-existing' | 'start-empty' | 'replace-after-backup' | 'cancelled' | 'no-source-data' | 'noop-same-root' = 'no-source-data';
+            if (previousRoot) {
+                choice = await askStorageChangeAction({
+                    previousRoot,
+                    nextRoot: prospectiveNextRoot,
+                });
+            }
+            if (choice === 'cancelled') return;
+            if (choice === 'noop-same-root' && settingUnchanged) return;
+
+            // Migrate BEFORE the setting change — see extension.ts for
+            // full rationale. Ensures event subscribers see files at the
+            // new root when `onDidChangeStorageRoot` fires.
+            if (previousRoot && choice !== 'no-source-data' && choice !== 'noop-same-root') {
+                try {
+                    await executeStorageChangeAction(
+                        { previousRoot, nextRoot: prospectiveNextRoot },
+                        choice
+                    );
+                } catch (e) {
+                    // Surface the failure and abort — leaving the setting
+                    // pointed at the old root and existing data intact.
+                    // Silently swallowing here would commit the setting
+                    // change and orphan the user's data at the old root.
+                    const msg = e instanceof Error ? e.message : String(e);
+                    await vscode.window.showErrorMessage(
+                        `RunQL storage change failed while ${choice === 'move' ? 'moving' : choice === 'copy' ? 'copying' : 'preparing'} files: ${msg}. Your existing data is untouched and the storage-location setting has not been changed.`
+                    );
+                    return;
+                }
+            }
+
+            markProgrammaticStorageChange({
+                displayPath: prospectiveNextRoot.displayPath,
+                location: prospectiveNextRoot.location,
+            });
+
+            if (target === 'custom' && prospectiveCustomPath !== undefined) {
+                await cfg.update('customPath', prospectiveCustomPath, vscode.ConfigurationTarget.Global);
+            }
+            if (!settingUnchanged) {
+                await cfg.update('location', target, vscode.ConfigurationTarget.Global);
+            }
+
+            const next = tryResolveRunQLRoot();
+            if (!next) return;
+
+            await postMigrationHousekeeping();
+
+            // Peer-window coordination: write a short-TTL commit
+            // marker at the new root so any other VS Code windows on
+            // this machine that receive the settings.json change via
+            // Settings Sync short-circuit their own auto-migration
+            // instead of re-running against a source root we just
+            // migrated. See extension.ts settings-edit subscriber.
+            if (previousRoot) {
+                const { writeStorageChangeCommitMarker } = await import(
+                    '../core/storageMigration'
+                );
+                await writeStorageChangeCommitMarker(next, previousRoot.displayPath);
+            }
+        } finally {
+            const { clearExpectedNextRoot } = await import('../core/storageMigration');
+            clearExpectedNextRoot();
+            setTimeout(releaseSuppression, 750);
+        }
+    }
+
     private _setWebviewMessageListener(webview: vscode.Webview) {
         webview.onDidReceiveMessage(
             async (message: Record<string, unknown>) => {
@@ -109,8 +277,24 @@ export class WelcomeView {
 
                     case 'initialize':
                         try {
-                            if ((vscode.workspace.workspaceFolders?.length ?? 0) === 0) {
-                                vscode.window.showWarningMessage('Open a folder before initializing RunQL.');
+                            const location = vscode.workspace
+                                .getConfiguration('runql.storage')
+                                .get<StorageLocation>('location', 'workspace');
+                            if (location === 'workspace') {
+                                await promptWorkspaceOwnerFolder();
+                                if ((vscode.workspace.workspaceFolders?.length ?? 0) === 0) {
+                                    vscode.window.showWarningMessage(
+                                        'Workspace storage requires an open folder. Open a folder or switch RunQL storage to User-level.'
+                                    );
+                                    return;
+                                }
+                            }
+
+                            const root = tryResolveRunQLRoot();
+                            if (!root) {
+                                vscode.window.showWarningMessage(
+                                    'RunQL storage cannot be resolved. Configure a storage location and try again.'
+                                );
                                 return;
                             }
 
@@ -123,8 +307,14 @@ export class WelcomeView {
                             await ensureDPDirs();
                             await queryIndex.initialize();
                             await initializePromptFiles();
-                            await ensureAgentsMd();
-                            await ensureReadmeMd();
+
+                            if (root.location === 'workspace') {
+                                await ensureAgentsMd();
+                                await ensureReadmeMd();
+                            } else {
+                                await promptWorkspaceLinkInit(root);
+                            }
+
                             await HistoryService.getInstance().initialize();
 
                             await updateProjectInitializedContext();
@@ -136,12 +326,64 @@ export class WelcomeView {
                         }
                         break;
 
+                    case 'changeStorageLocation': {
+                        // Ask-then-commit: run the migration dialog BEFORE any
+                        // setting change, so Cancel is a true no-op and the
+                        // radio in the webview reverts naturally (server-side
+                        // storage.location never changed → next _sendStatus
+                        // reflects the original).
+                        const rawTarget = typeof message.location === 'string' ? message.location : 'workspace';
+                        const target: StorageLocation =
+                            rawTarget === 'user' || rawTarget === 'custom' ? rawTarget : 'workspace';
+                        const rawCustomPath = typeof message.customPath === 'string' ? message.customPath : undefined;
+                        await this._handleChangeStorageLocation(target, rawCustomPath);
+                        // Whatever happened, refresh the status so the radios
+                        // reflect the authoritative server-side setting.
+                        await this._sendStatus();
+                        break;
+                    }
+
+                    case 'browseCustomPath': {
+                        const picked = await vscode.window.showOpenDialog({
+                            canSelectFiles: false,
+                            canSelectFolders: true,
+                            canSelectMany: false,
+                            openLabel: 'Use as RunQL custom storage folder',
+                            title: 'RunQL: Custom Storage Path',
+                        });
+                        if (picked && picked.length > 0) {
+                            this._panel.webview.postMessage({
+                                command: 'customPathPicked',
+                                fsPath: picked[0].fsPath,
+                            });
+                        }
+                        break;
+                    }
+
+                    case 'openStorageFolder':
+                        await vscode.commands.executeCommand('runql.storage.openFolder');
+                        break;
+
+                    case 'showWarning': {
+                        const msg = typeof message.message === 'string' ? message.message : '';
+                        if (msg) vscode.window.showWarningMessage(msg);
+                        break;
+                    }
+
                     case 'addConnection':
                         vscode.commands.executeCommand('runql.connection.add');
                         break;
 
                     case 'openSettings':
                         vscode.commands.executeCommand('runql.openSettings');
+                        break;
+
+                    case 'openAiSettings':
+                        // Open the VS Code Settings editor filtered to RunQL AI settings.
+                        await vscode.commands.executeCommand(
+                            'workbench.action.openSettings',
+                            'runql.ai'
+                        );
                         break;
 
                     case 'openExtensionSearch': {
@@ -165,18 +407,25 @@ export class WelcomeView {
                     case 'openReadme':
                         try {
                             const folders = vscode.workspace.workspaceFolders;
-                            if (!folders) {
+                            if (!folders || folders.length === 0) {
                                 vscode.window.showWarningMessage('No workspace folder open.');
                                 return;
                             }
-
-                            const readmeRunqlPath = vscode.Uri.joinPath(folders[0].uri, 'README_RUNQL.md');
-                            if (!(await fileExists(readmeRunqlPath))) {
+                            // Prefer a workspace folder that already has README_RUNQL.md; fall back to the first.
+                            let target: vscode.Uri | undefined;
+                            for (const f of folders) {
+                                const candidate = vscode.Uri.joinPath(f.uri, 'README_RUNQL.md');
+                                if (await fileExists(candidate)) {
+                                    target = candidate;
+                                    break;
+                                }
+                            }
+                            if (!target) {
                                 vscode.window.showWarningMessage('README_RUNQL.md not found. Initialize RunQL to create it.');
                                 return;
                             }
 
-                            const doc = await vscode.workspace.openTextDocument(readmeRunqlPath);
+                            const doc = await vscode.workspace.openTextDocument(target);
                             await vscode.window.showTextDocument(doc, { preview: true, viewColumn: vscode.ViewColumn.Beside });
                         } catch (_e: unknown) {
                             vscode.window.showWarningMessage('Could not open README_RUNQL.md.');

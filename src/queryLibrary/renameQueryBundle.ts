@@ -4,6 +4,7 @@ import { fileExists } from '../core/fsWorkspace';
 import { queryIndex } from './queryIndex';
 import { Logger } from '../core/logger';
 import { ErrorHandler, ErrorSeverity, formatQueryError } from '../core/errorHandler';
+import { makeStoredPath, resolveStoredPath, resolveStoredPathToExistingFile } from '../core/storageRoot';
 import {
     ignoreNewUri,
     isCanonicalSql,
@@ -21,11 +22,11 @@ export async function renameQueryBundle(context: vscode.ExtensionContext, arg?: 
     if (arg instanceof vscode.Uri) {
         targetUri = arg;
     } else if (arg?.entry?.path) {
-        // Handle SavedQueryItem
-        const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-        if (root) {
-            targetUri = vscode.Uri.joinPath(root, arg.entry.path);
-        }
+        // Handle SavedQueryItem — probe every workspace folder for the
+        // actual file so a multi-root workspace doesn't accidentally
+        // rename the wrong folder's copy (the synchronous resolver
+        // falls back to folder[0] blindly).
+        targetUri = await resolveStoredPathToExistingFile(arg.entry.path);
     }
 
     // Fallback if no URI provided
@@ -66,22 +67,24 @@ export async function renameQueryBundle(context: vscode.ExtensionContext, arg?: 
     // Normalize (in case they typed .sql)
     const newBaseName = newNameInput.endsWith('.sql') ? newNameInput.slice(0, -4) : newNameInput;
 
-    // 3. Ask for Destination Folder
-    const wsFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!wsFolder) return;
-
-    const currentDir = path.dirname(targetUri.fsPath);
-    const currentRel = vscode.workspace.asRelativePath(currentDir, false);
+    // 3. Ask for Destination Folder — root-relative when possible so paths
+    // remain portable across storage-mode switches.
+    const currentDirUri = targetUri.with({ path: path.dirname(targetUri.path) });
+    const currentRel = makeStoredPath(currentDirUri);
 
     const folderInput = await vscode.window.showInputBox({
-        prompt: "Destination Folder (relative)",
+        prompt: "Destination Folder (relative to RunQL storage root)",
         value: currentRel,
-        placeHolder: "RunQL/queries"
+        placeHolder: 'queries',
     });
 
     if (folderInput === undefined) return; // Cancelled
 
-    const destFolder = vscode.Uri.joinPath(wsFolder.uri, folderInput);
+    const destFolder = resolveStoredPath(folderInput);
+    if (!destFolder) {
+        vscode.window.showErrorMessage('Could not resolve destination folder relative to the RunQL storage root.');
+        return;
+    }
 
     // Ensure directory exists
     if (!(await fileExists(destFolder))) {
@@ -148,8 +151,9 @@ export async function renameQueryBundle(context: vscode.ExtensionContext, arg?: 
     await doRename(oldChartConfig, newChartConfig);
     await doRename(oldAnnotated, newAnnotated);
 
-    // 6. Patch References
-    const newSqlRel = vscode.workspace.asRelativePath(newSqlUri, false);
+    // 6. Patch References — use storage-root-relative path for the sidecar
+    // links so they survive storage-mode switches.
+    const newSqlRel = makeStoredPath(newSqlUri);
     if (await fileExists(newComments)) await patchJsonSourcePath(newComments, newSqlRel);
     if (await fileExists(newChart)) await patchJsonSourcePath(newChart, newSqlRel);
     if (await fileExists(newChartConfig)) await patchJsonSourcePath(newChartConfig, newSqlRel);

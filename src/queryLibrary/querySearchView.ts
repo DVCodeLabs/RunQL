@@ -3,6 +3,7 @@ import { QueryIndex } from './queryIndex';
 import { searchEntries, getRecentEntries } from './querySearch';
 import { QueryIndexEntry } from './queryIndexer';
 import { parseMdMetadata } from './mdParser';
+import { resolveStoredPath } from '../core/storageRoot';
 
 const CMD_PREFIX = 'runql';
 const OPEN_CMD = 'runql.query.openSaved';
@@ -92,10 +93,9 @@ export class QuerySearchViewProvider implements vscode.WebviewViewProvider {
         };
 
         // Read companion .md for tooltip
-        const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-        if (root) {
-            const mdRelPath = entry.path.replace(/\.(sql|postgres)$/i, '.md');
-            const mdUri = vscode.Uri.joinPath(root, mdRelPath);
+        const mdRelPath = entry.path.replace(/\.(sql|postgres)$/i, '.md');
+        const mdUri = resolveStoredPath(mdRelPath);
+        if (mdUri) {
             try {
                 const mdBytes = await vscode.workspace.fs.readFile(mdUri);
                 const mdContent = Buffer.from(mdBytes).toString('utf8');
@@ -137,9 +137,8 @@ export class QuerySearchViewProvider implements vscode.WebviewViewProvider {
     }
 
     private openResult(path: string, connectionId?: string | null) {
-        const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-        if (!root) return;
-        const uri = vscode.Uri.joinPath(root, path);
+        const uri = resolveStoredPath(path);
+        if (!uri) return;
         vscode.commands.executeCommand(OPEN_CMD, uri, connectionId);
     }
 

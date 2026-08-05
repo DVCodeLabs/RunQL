@@ -9,6 +9,37 @@ import { ExplorerViewProvider, ExplorerItem } from "./connections/explorerView";
 import { SavedQueriesViewProvider } from "./queryLibrary/savedQueriesView";
 import { registerQuerySearchView } from "./queryLibrary/querySearchView";
 import { registerDPWatchers } from "./core/watchers";
+import {
+  registerStorageRootChangeListener,
+  tryResolveRunQLRoot,
+  onDidChangeStorageRoot,
+  StorageLocation,
+  validateCustomPath,
+  checkCustomPathWritable,
+  computeProspectiveRoot,
+} from "./core/storageRoot";
+import {
+  promptWorkspaceLinkInit,
+  promptWorkspaceOwnerFolder,
+} from "./core/workspaceLinkInit";
+import {
+  runStorageChangeFlow,
+  pruneMigrationBackups,
+  pruneExpiredStorageChangeLock,
+  buildRevertCallback,
+  isAutoMigrationSuppressed,
+  suppressAutoMigration,
+  askStorageChangeAction,
+  executeStorageChangeAction,
+  postMigrationHousekeeping,
+  markProgrammaticStorageChange,
+  consumeExpectedNextRootIfMatches,
+  clearExpectedNextRoot,
+  writeStorageChangeCommitMarker,
+  hasRecentPeerCommit,
+} from "./core/storageMigration";
+import { cleanupWorkspaceLinksOnWorkspaceMode } from "./core/workspaceLinkCleanup";
+import { maybeRefreshGeneratedDocsOnVersionBump } from "./core/refreshGeneratedDocs";
 
 // Store initialization
 import { initConnectionStore } from "./connections/connectionStore";
@@ -548,7 +579,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     duration?: number,
   ) => {
     const { HistoryService } = require('./services/historyService');
-    HistoryService.getInstance().addEntry({
+    void HistoryService.getInstance().addEntry({
       query: sql,
       connectionName: profile.name,
       schemaName: getSchemaNameForHistory(profile, sql),
@@ -1364,16 +1395,43 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     }),
     vscode.commands.registerCommand("runql.project.initialize", async () => {
       try {
-        if ((vscode.workspace.workspaceFolders?.length ?? 0) === 0) {
-          vscode.window.showWarningMessage('Open a folder before initializing RunQL.');
+        // In workspace mode with a multi-root workspace, prompt for the
+        // owning folder if one isn't already persisted.
+        const cfgLocation = vscode.workspace
+          .getConfiguration('runql.storage')
+          .get<StorageLocation>('location', 'workspace');
+        if (cfgLocation === 'workspace') {
+          const owner = await promptWorkspaceOwnerFolder();
+          if (!owner && (vscode.workspace.workspaceFolders?.length ?? 0) === 0) {
+            vscode.window.showWarningMessage(
+              'RunQL workspace storage requires an open folder. Open a folder or switch RunQL storage to User-level.'
+            );
+            return;
+          }
+        }
+
+        let root = tryResolveRunQLRoot();
+        if (!root) {
+          vscode.window.showWarningMessage(
+            'RunQL storage cannot be resolved. Open a folder or configure RunQL storage from the Welcome page.'
+          );
           return;
         }
 
-        const { ensureDPDirs, ensureAgentsMd } = require('./core/fsWorkspace');
+        const { ensureDPDirs, ensureAgentsMd, ensureReadmeMd } = require('./core/fsWorkspace');
 
-        // Create folder structure
+        // Create folder structure at the resolved storage root
         await ensureDPDirs();
-        await ensureAgentsMd();
+
+        // In workspace mode, AGENTS.md and README_RUNQL.md live in the
+        // workspace folder itself. In user/custom mode, we prompt per
+        // workspace folder in the link-init flow below.
+        if (root.location === 'workspace') {
+          await ensureAgentsMd();
+          await ensureReadmeMd();
+        } else {
+          await promptWorkspaceLinkInit(root);
+        }
 
         // Initialize all systems
         await initializeProjectComponents(context);
@@ -1385,6 +1443,289 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         vscode.window.showErrorMessage(`Initialization failed: ${msg}`);
+      }
+    }),
+    vscode.commands.registerCommand("runql.storage.changeLocation", async () => {
+      // Ask-then-commit: run the migration dialog BEFORE touching any
+      // setting. Cancel is a true no-op — no revert dance needed.
+      const releaseSuppression = suppressAutoMigration();
+      try {
+      const cfg = vscode.workspace.getConfiguration('runql.storage');
+      const previousSettings = {
+        location: cfg.get<StorageLocation>('location', 'workspace'),
+        userPath: cfg.get<string>('userPath', '~/.runql'),
+        codespacesPath: cfg.get<string>('codespacesPath', '/workspaces/.runql'),
+        customPath: cfg.get<string>('customPath', ''),
+      };
+      const previousRoot = tryResolveRunQLRoot();
+      const items: (vscode.QuickPickItem & { value: StorageLocation })[] = [
+        {
+          label: 'Workspace folder',
+          description: previousSettings.location === 'workspace' ? '(current)' : undefined,
+          detail: 'Stores RunQL files in this project.',
+          value: 'workspace',
+        },
+        {
+          label: 'User-level folder',
+          description: previousSettings.location === 'user' ? '(current)' : undefined,
+          detail: 'One system-user location for RunQL files across all projects on this machine.',
+          value: 'user',
+        },
+        {
+          label: 'Custom folder',
+          description: previousSettings.location === 'custom' ? '(current)' : undefined,
+          detail: 'Stores RunQL files in a path you choose - outside of your project folder.',
+          value: 'custom',
+        },
+      ];
+      const picked = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Choose where RunQL should store its files',
+        title: 'RunQL: Change Storage Location',
+      });
+      if (!picked) return;
+      const settingUnchanged = picked.value === previousSettings.location;
+
+      // Determine the prospective destination path — for custom, we need
+      // the path up front so we can dry-run the migration prompt before
+      // committing the setting.
+      let prospectiveCustomPath: string | undefined;
+      if (picked.value === 'custom') {
+        const raw = await vscode.window.showInputBox({
+          title: 'RunQL: Custom Storage Path',
+          prompt: 'Absolute path to the RunQL storage folder. ~ expands to your home directory.',
+          value: previousSettings.customPath,
+          ignoreFocusOut: true,
+          validateInput: (v) => {
+            const r = validateCustomPath(v ?? '');
+            return r.error ? r.error.message : undefined;
+          },
+        });
+        if (raw === undefined) return;
+        const validated = validateCustomPath(raw.trim());
+        if (validated.error || !validated.fsPath) {
+          vscode.window.showErrorMessage(
+            validated.error?.message ?? 'Custom RunQL storage path is invalid.'
+          );
+          return;
+        }
+        const writeErr = await checkCustomPathWritable(validated.fsPath);
+        if (writeErr) {
+          vscode.window.showErrorMessage(writeErr.message);
+          return;
+        }
+        prospectiveCustomPath = validated.fsPath;
+      }
+
+      // Compute the prospective next root WITHOUT applying any settings.
+      const prospectiveNextRoot = computeProspectiveRoot(picked.value, {
+        customPath: prospectiveCustomPath ?? previousSettings.customPath,
+        userPath: previousSettings.userPath,
+        codespacesPath: previousSettings.codespacesPath,
+      });
+      if (!prospectiveNextRoot) {
+        vscode.window.showWarningMessage(
+          'Cannot resolve the new storage root. Open a folder or provide a valid path.'
+        );
+        return;
+      }
+
+      // Ask FIRST. If the user cancels, no setting change happens.
+      let choice: 'move' | 'copy' | 'use-existing' | 'start-empty' | 'replace-after-backup' | 'cancelled' | 'no-source-data' | 'noop-same-root' = 'no-source-data';
+      if (previousRoot) {
+        choice = await askStorageChangeAction({
+          previousRoot,
+          nextRoot: prospectiveNextRoot,
+        });
+      }
+      if (choice === 'cancelled') return;
+      if (choice === 'noop-same-root' && settingUnchanged) return;
+
+      // ROOT-CAUSE FIX: migrate BEFORE the setting change.
+      //
+      // When we update `runql.storage.location`, `onDidChangeStorageRoot`
+      // fires and every subscriber (watchers, queryIndex, welcomeView,
+      // updateProjectInitializedContext) reacts against whatever state
+      // exists at the new root. If we haven't moved files yet, those
+      // subscribers see an empty new root and load empty state — which
+      // used to require a fleet of manual reloads afterwards.
+      //
+      // Doing the migration first means: when subscribers fire in
+      // response to the setting change, files are already at the new
+      // root and everything just works.
+      if (previousRoot && choice !== 'no-source-data' && choice !== 'noop-same-root') {
+        try {
+          const outcome = await executeStorageChangeAction(
+            { previousRoot, nextRoot: prospectiveNextRoot },
+            choice
+          );
+          Logger.info(`Storage-change action outcome: ${outcome}`);
+        } catch (e) {
+          Logger.error('Storage-change action failed', e);
+          const msg = e instanceof Error ? e.message : String(e);
+          await vscode.window.showErrorMessage(
+            `RunQL storage change failed while ${choice === 'move' ? 'moving' : choice === 'copy' ? 'copying' : 'preparing'} files: ${msg}. Your existing data is untouched and the storage-location setting has not been changed.`
+          );
+          return;
+        }
+      }
+
+      // Mark the resolved root we're about to commit so the
+      // settings-change subscriber can recognise this as a
+      // programmatic change (not a direct settings.json edit) and skip
+      // its auto-migration. Deterministic — the check is a value
+      // comparison rather than a wall-time race.
+      markProgrammaticStorageChange({
+        displayPath: prospectiveNextRoot.displayPath,
+        location: prospectiveNextRoot.location,
+      });
+
+      // NOW apply the setting change. Subscribers fire against a
+      // consistent state (files present at the new root).
+      if (picked.value === 'custom' && prospectiveCustomPath !== undefined) {
+        await cfg.update('customPath', prospectiveCustomPath, vscode.ConfigurationTarget.Global);
+      }
+      if (!settingUnchanged) {
+        await cfg.update('location', picked.value, vscode.ConfigurationTarget.Global);
+      }
+
+      const next = tryResolveRunQLRoot();
+      if (!next) {
+        vscode.window.showWarningMessage(
+          'Storage location saved, but RunQL cannot resolve the new root yet. Open Welcome to complete setup.'
+        );
+        return;
+      }
+
+      // Post-migration housekeeping runs AFTER the settings change so
+      // that `tryResolveRunQLRoot()` inside `postMigrationHousekeeping`
+      // returns the new authoritative root (retention pruning, stale
+      // `.runql-link/` cleanup on switch-to-workspace, AGENTS.md
+      // storage-aware refresh).
+      await postMigrationHousekeeping();
+
+      // Peer-window coordination: Settings Sync will propagate this
+      // change to any other VS Code windows on the same machine. Their
+      // process-local `_expectedNextRoot` marker is null, so they'd
+      // otherwise enter the settings-edit auto-migration flow against a
+      // source root WE already migrated. Write a short-TTL filesystem
+      // marker at the new root that peer windows check and short-circuit
+      // on.
+      if (previousRoot) {
+        await writeStorageChangeCommitMarker(next, previousRoot.displayPath);
+      }
+
+      vscode.window.showInformationMessage(
+        `RunQL storage location: ${picked.label} — ${next.displayPath}`
+      );
+      } finally {
+        // Clear any lingering programmatic-change marker in case an
+        // early return above skipped the settings commit (so no matching
+        // event would fire to consume it). Belt-and-braces alongside
+        // the depth-counter suppression release below.
+        clearExpectedNextRoot();
+        setTimeout(releaseSuppression, 750);
+      }
+    }),
+    vscode.commands.registerCommand("runql.storage.openFolder", async () => {
+      const root = tryResolveRunQLRoot();
+      if (!root) {
+        vscode.window.showWarningMessage('RunQL storage is not configured.');
+        return;
+      }
+      try {
+        await vscode.commands.executeCommand('revealFileInOS', root.uri);
+      } catch {
+        try {
+          await vscode.env.openExternal(root.uri);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          vscode.window.showErrorMessage(`Could not open ${root.displayPath}: ${msg}`);
+        }
+      }
+    }),
+    vscode.commands.registerCommand("runql.storage.moveFolder", async () => {
+      // Re-runs the migration flow against the current source root and a
+      // user-chosen destination, useful when the setting hasn't changed
+      // but the user wants to relocate data (e.g., between two custom
+      // paths on the same machine).
+      const releaseSuppression = suppressAutoMigration();
+      try {
+      const source = tryResolveRunQLRoot();
+      if (!source) {
+        vscode.window.showWarningMessage('RunQL storage is not configured.');
+        return;
+      }
+      const picked = await vscode.window.showOpenDialog({
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        openLabel: 'Move RunQL data here',
+        title: 'RunQL: Move Storage Folder',
+      });
+      if (!picked || picked.length === 0) return;
+      const destUri = picked[0];
+      if (destUri.toString() === source.uri.toString()) {
+        vscode.window.showInformationMessage('Destination matches current storage root.');
+        return;
+      }
+      // Validate the destination against the same safety rules the custom
+      // storage-path setting uses (blocks home dir, workspace roots,
+      // /workspaces, filesystem/drive roots) and verify it's writable.
+      const validated = validateCustomPath(destUri.fsPath);
+      if (validated.error || !validated.fsPath) {
+        vscode.window.showErrorMessage(
+          validated.error?.message ?? 'Destination path is invalid for RunQL storage.'
+        );
+        return;
+      }
+      const writeErr = await checkCustomPathWritable(validated.fsPath);
+      if (writeErr) {
+        vscode.window.showErrorMessage(writeErr.message);
+        return;
+      }
+      const destAsRoot = {
+        location: 'custom' as StorageLocation,
+        uri: vscode.Uri.file(validated.fsPath),
+        displayPath: validated.fsPath,
+        isCodespaces: source.isCodespaces,
+        isWorkspaceScoped: false,
+      };
+      const outcome = await runStorageChangeFlow({
+        previousRoot: source,
+        nextRoot: destAsRoot,
+        trigger: 'command',
+      });
+      vscode.window.showInformationMessage(`Move outcome: ${outcome}`);
+      if (outcome === 'moved' || outcome === 'copied' || outcome === 'replaced') {
+        const pick = await vscode.window.showInformationMessage(
+          `Data is now at ${destUri.fsPath}. Switch RunQL storage location to this folder?`,
+          'Switch to Custom',
+          'Later'
+        );
+        if (pick === 'Switch to Custom') {
+          const cfg = vscode.workspace.getConfiguration('runql.storage');
+          // Mark this window's own settings edit so our subscriber
+          // skips the settings-edit auto-migration (files already at
+          // dest — runStorageChangeFlow just committed them).
+          markProgrammaticStorageChange({
+            displayPath: validated.fsPath,
+            location: 'custom',
+          });
+          try {
+            await cfg.update('customPath', destUri.fsPath, vscode.ConfigurationTarget.Global);
+            await cfg.update('location', 'custom', vscode.ConfigurationTarget.Global);
+            // Peer-window coordination: any other window on this
+            // machine will receive the same settings change and would
+            // otherwise re-run the flow from source to dest.
+            await writeStorageChangeCommitMarker(destAsRoot, source.displayPath);
+          } finally {
+            clearExpectedNextRoot();
+          }
+        }
+      }
+      } finally {
+        // Same debounce as changeLocation — see comment there.
+        setTimeout(releaseSuppression, 750);
       }
     }),
     vscode.commands.registerCommand("runql.view.refreshSchemas", async (skipIntrospection?: boolean) => {
@@ -2382,6 +2723,177 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     })
   );
 
+  // Storage-root change listener — must be registered before watchers so
+  // watchers can subscribe to the change event.
+  context.subscriptions.push(registerStorageRootChangeListener());
+  // Mirror of the runql.storage.* config values as of the last observed
+  // change. VS Code's config change events don't carry old values, so we
+  // snapshot after each fire and feed the prior snapshot to
+  // buildRevertCallback so the migration flow can restore state on cancel.
+  const snapshotStorageConfig = () => {
+    const cfg = vscode.workspace.getConfiguration('runql.storage');
+    return {
+      location: cfg.get<StorageLocation>('location', 'workspace'),
+      userPath: cfg.get<string>('userPath', '~/.runql'),
+      codespacesPath: cfg.get<string>('codespacesPath', '/workspaces/.runql'),
+      customPath: cfg.get<string>('customPath', ''),
+    };
+  };
+  let previousStorageConfig = snapshotStorageConfig();
+  context.subscriptions.push(
+    onDidChangeStorageRoot(({ previous, next }) => {
+      void updateProjectInitializedContext();
+      if (next) {
+        Logger.info(`RunQL storage root now: ${next.location} → ${next.displayPath}`);
+      } else {
+        Logger.warn('RunQL storage root is unresolved.');
+      }
+      const snapshotBefore = previousStorageConfig;
+      previousStorageConfig = snapshotStorageConfig();
+      // Skip auto-migration when this event came from OUR OWN
+      // `cfg.update` inside a changeLocation / moveFolder command.
+      // Recognised deterministically by matching the resolved next root
+      // against the marker the command set via
+      // `markProgrammaticStorageChange`. This replaces a wall-clock
+      // suppression window that was fragile under settings-sync or
+      // slow-disk delays.
+      if (consumeExpectedNextRootIfMatches(next)) return;
+      // Legacy suppress-flag path: still honored for any code path that
+      // uses the depth-counter guard (e.g. tests, or a future flow that
+      // doesn't know its target root ahead of time).
+      if (isAutoMigrationSuppressed()) return;
+      if (previous && next && previous.uri.toString() !== next.uri.toString()) {
+        void (async () => {
+          // Peer-window coordination: another VS Code window on this
+          // machine may have just performed and committed this exact
+          // (previous → next) migration. Settings Sync propagates the
+          // settings.json edit here, but our process-local
+          // `_expectedNextRoot` marker is null so the auto-migration
+          // path would re-run the flow against a source root the peer
+          // already emptied. Skip if a fresh peer commit marker is
+          // present at the new root.
+          try {
+            if (await hasRecentPeerCommit(next, previous.displayPath)) {
+              Logger.info(
+                'Skipping settings-edit auto-migration: peer window committed the same storage-change recently.'
+              );
+              return;
+            }
+          } catch (e) {
+            Logger.warn('Peer-commit marker check failed', e);
+          }
+          try {
+            await runStorageChangeFlow({
+              previousRoot: previous,
+              nextRoot: next,
+              trigger: 'setting-change',
+              revertSetting: buildRevertCallback(snapshotBefore),
+            });
+          } catch (e) {
+            Logger.warn('Storage-change flow failed on settings edit', e);
+          }
+        })();
+      }
+    })
+  );
+
+  // Best-effort backup and stale-lock pruning at activation for the
+  // current root.
+  void (async () => {
+    try {
+      const root = tryResolveRunQLRoot();
+      if (root) {
+        await pruneMigrationBackups(root);
+        await pruneExpiredStorageChangeLock(root);
+      }
+    } catch (e) {
+      Logger.warn('Startup housekeeping failed', e);
+    }
+  })();
+
+  // On extension version bump, refresh RunQL-generated docs (AGENTS.md
+  // bounded section + unedited README_RUNQL.md) in every workspace folder
+  // already linked to RunQL. Only fires when the version actually
+  // changed, and skips any folder that hasn't been linked yet.
+  void maybeRefreshGeneratedDocsOnVersionBump(context, extensionVersion);
+
+  // In workspace mode, delete stale `.runql-link/` folders left behind by
+  // an earlier user/custom session. No-op in user/custom mode — those
+  // modes surface their own link-init flow below.
+  const runLinkHousekeeping = async () => {
+    try {
+      const root = tryResolveRunQLRoot();
+      if (!root || root.location !== 'workspace') return;
+      await cleanupWorkspaceLinksOnWorkspaceMode();
+    } catch (e) {
+      Logger.warn('Workspace-link housekeeping failed', e);
+    }
+  };
+
+  // Auto-prompt workspace-link init when RunQL is in user/custom mode and
+  // an open workspace folder isn't yet linked to (or explicitly skipped
+  // for) the current storage root. This surfaces "make agents/humans in
+  // this project aware of your central RunQL data" without requiring the
+  // user to remember to run Initialize.
+  //
+  // Single-flight guarded — activation kicks the prompt off, and
+  // onDidChangeWorkspaceFolders/onDidChangeStorageRoot can also request
+  // it; the guard ensures overlapping requests coalesce.
+  let linkPromptInFlight = false;
+  let linkPromptPending = false;
+  const maybePromptWorkspaceLinkInit = async () => {
+    if (linkPromptInFlight) {
+      linkPromptPending = true;
+      return;
+    }
+    linkPromptInFlight = true;
+    try {
+      do {
+        linkPromptPending = false;
+        try {
+          const root = tryResolveRunQLRoot();
+          if (!root) continue;
+          if (root.location === 'workspace') continue;
+          if ((vscode.workspace.workspaceFolders?.length ?? 0) === 0) continue;
+          await promptWorkspaceLinkInit(root);
+        } catch (e) {
+          Logger.warn('Workspace-link auto-prompt failed', e);
+        }
+      } while (linkPromptPending);
+    } finally {
+      linkPromptInFlight = false;
+    }
+  };
+  void (async () => {
+    await runLinkHousekeeping();
+    await maybePromptWorkspaceLinkInit();
+  })();
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      // A folder was added or removed; re-run housekeeping (migration or
+      // cleanup) for the current mode, then re-check for unlinked folders.
+      // Idempotent — the link-init flow filters linked/skipped folders.
+      void (async () => {
+        await runLinkHousekeeping();
+        await maybePromptWorkspaceLinkInit();
+      })();
+    })
+  );
+  context.subscriptions.push(
+    onDidChangeStorageRoot(({ next }) => {
+      // Switching modes into user/custom should re-check open folders
+      // for unlinked candidates against the new root. Safe to run
+      // unconditionally now that migrations happen BEFORE the setting
+      // change — this only fires after files are already at the new
+      // root, and the maybePromptWorkspaceLinkInit single-flight guard
+      // handles duplicate events (e.g. customPath + location updated
+      // back-to-back).
+      if (next && next.location !== 'workspace') {
+        void maybePromptWorkspaceLinkInit();
+      }
+    })
+  );
+
   // Watchers to refresh the views when JSON files change
   const watchers = registerDPWatchers(
     () => {
@@ -2904,8 +3416,15 @@ async function initializeProjectComponents(context: vscode.ExtensionContext) {
     // 4. Prompt Files
     await initializePromptFiles();
 
-    // 5. Documentation
-    await ensureReadmeMd();
+    // 5. Documentation — only auto-create README_RUNQL.md in workspace
+    // mode, where the RunQL data tree also lives inside the workspace.
+    // In user/custom mode the workspace-link init flow owns creation of
+    // AGENTS.md, README_RUNQL.md, .runql-ref.json, and the gitignore
+    // entries so we don't write project-level files without asking.
+    const activeRoot = tryResolveRunQLRoot();
+    if (activeRoot?.location === 'workspace') {
+      await ensureReadmeMd();
+    }
     // 6. History Service
     await HistoryService.getInstance().initialize(context);
 

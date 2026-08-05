@@ -215,9 +215,11 @@ describe('query connection storage', () => {
     expect(fileExists('/workspace/RunQL/queries/Analytics_Prod/reports/revenue.sql')).toBe(true);
     expect(readTextAt('/workspace/RunQL/queries/Analytics_Prod/reports/revenue.md')).toContain('connection: "Analytics Prod"');
 
+    // v3 writes storage-root-relative paths; legacy `RunQL/…` reads are
+    // still accepted (seed data used the legacy form).
     const indexFile = readJsonAt<{ queries: Array<{ path: string; docPath?: string; connectionName?: string; searchText?: string }> }>('/workspace/RunQL/system/queries/queryIndex.json');
-    expect(indexFile.queries[0].path).toBe('RunQL/queries/Analytics_Prod/reports/revenue.sql');
-    expect(indexFile.queries[0].docPath).toBe('RunQL/queries/Analytics_Prod/reports/revenue.md');
+    expect(indexFile.queries[0].path).toBe('queries/Analytics_Prod/reports/revenue.sql');
+    expect(indexFile.queries[0].docPath).toBe('queries/Analytics_Prod/reports/revenue.md');
     expect(indexFile.queries[0].connectionName).toBe('Analytics Prod');
     expect(indexFile.queries[0].searchText).toContain('analytics prod');
 
@@ -263,7 +265,7 @@ describe('query connection storage', () => {
     expect(readTextAt('/workspace/RunQL/queries/Analytics_Prod/revenue.md')).toContain('connection: "Analytics_Prod"');
 
     const indexFile = readJsonAt<{ queries: Array<{ path: string; connectionName?: string }> }>('/workspace/RunQL/system/queries/queryIndex.json');
-    expect(indexFile.queries[0].path).toBe('RunQL/queries/Analytics_Prod/revenue.sql');
+    expect(indexFile.queries[0].path).toBe('queries/Analytics_Prod/revenue.sql');
     expect(indexFile.queries[0].connectionName).toBe('Analytics_Prod');
 
     const history = readJsonAt<Array<{ connectionName: string }>>('/workspace/RunQL/system/queries/queryHistory.json');

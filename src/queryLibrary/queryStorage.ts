@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ensureDPDirs, fileExists, readJson, writeJson } from '../core/fsWorkspace';
+import { makeStoredPath, normalizeStoredPath } from '../core/storageRoot';
 import { Logger } from '../core/logger';
 import { sanitizeSchemaBundleName } from '../schema/schemaPaths';
 import { HistoryService } from '../services/historyService';
@@ -82,20 +83,15 @@ async function updateQueryIndexConnectionName(oldFolder: vscode.Uri, newFolder: 
 
   try {
     const index = await readJson<QueryIndexFile>(indexUri);
-    const asRelative = (uri: vscode.Uri) => {
-      if (typeof vscode.workspace.asRelativePath === 'function') {
-        return vscode.workspace.asRelativePath(uri, false).replace(/\\/g, '/');
-      }
-      const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      return root ? uri.fsPath.replace(`${root}/`, '').replace(/\\/g, '/') : uri.fsPath;
-    };
-    const oldRel = asRelative(oldFolder);
-    const newRel = asRelative(newFolder);
+    const oldRel = makeStoredPath(oldFolder).replace(/\\/g, '/');
+    const newRel = makeStoredPath(newFolder).replace(/\\/g, '/');
     for (const entry of index.queries) {
-      if (entry.path.startsWith(`${oldRel}/`)) {
-        entry.path = `${newRel}/${entry.path.slice(oldRel.length + 1)}`;
-        if (entry.docPath?.startsWith(`${oldRel}/`)) {
-          entry.docPath = `${newRel}/${entry.docPath.slice(oldRel.length + 1)}`;
+      const entryPath = normalizeStoredPath(entry.path);
+      if (entryPath.startsWith(`${oldRel}/`)) {
+        entry.path = `${newRel}/${entryPath.slice(oldRel.length + 1)}`;
+        const entryDoc = entry.docPath ? normalizeStoredPath(entry.docPath) : undefined;
+        if (entryDoc && entryDoc.startsWith(`${oldRel}/`)) {
+          entry.docPath = `${newRel}/${entryDoc.slice(oldRel.length + 1)}`;
         }
         entry.connectionName = newName;
         entry.searchText = buildSearchText({

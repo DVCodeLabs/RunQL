@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { ensureDPDirs, fileExists, readJson } from "../core/fsWorkspace";
+import { resolveStoredPath } from "../core/storageRoot";
 import { parseMdMetadata } from "./mdParser";
 
 export interface QueryIndexFile {
@@ -40,11 +41,9 @@ export class SavedQueriesViewProvider implements vscode.TreeDataProvider<SavedQu
   ): Promise<SavedQueryItem> {
     if (!element.entry) return element;
 
-    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-    if (!root) return element;
-
     const mdRelPath = element.entry.path.replace(/\.(sql|postgres)$/i, '.md');
-    const mdUri = vscode.Uri.joinPath(root, mdRelPath);
+    const mdUri = resolveStoredPath(mdRelPath);
+    if (!mdUri) return element;
 
     try {
       const mdBytes = await vscode.workspace.fs.readFile(mdUri);
@@ -52,14 +51,10 @@ export class SavedQueriesViewProvider implements vscode.TreeDataProvider<SavedQu
       const mdMeta = parseMdMetadata(mdContent);
 
       // Extract "# What this query answers" section from raw body
-      let rawBody = '';
+      let rawBody: string;
       if (mdContent.startsWith('---')) {
         const endIdx = mdContent.indexOf('\n---', 3);
-        if (endIdx !== -1) {
-          rawBody = mdContent.slice(endIdx + 4);
-        } else {
-          rawBody = mdContent;
-        }
+        rawBody = endIdx !== -1 ? mdContent.slice(endIdx + 4) : mdContent;
       } else {
         rawBody = mdContent;
       }
@@ -241,10 +236,8 @@ export class SavedQueryItem extends vscode.TreeItem {
     item.description = new Date(dateStr).toLocaleTimeString(); // Show time since grouped by date
     item.iconPath = new vscode.ThemeIcon("file-code");
 
-    // ✅ Robust URI join
-    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-    if (root) {
-      const uri = vscode.Uri.joinPath(root, q.path);
+    const uri = resolveStoredPath(q.path);
+    if (uri) {
       item.command = {
         command: "runql.query.openSaved",
         title: "Open Query",

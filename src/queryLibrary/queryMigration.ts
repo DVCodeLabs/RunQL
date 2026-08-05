@@ -67,11 +67,10 @@ async function walkFiles(dir: vscode.Uri): Promise<vscode.Uri[]> {
 }
 
 function workspaceRelative(uri: vscode.Uri): string {
-  if (typeof vscode.workspace.asRelativePath === 'function') {
-    return vscode.workspace.asRelativePath(uri, false).replace(/\\/g, '/');
-  }
-  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  return root ? uri.fsPath.replace(`${root}/`, '').replace(/\\/g, '/') : uri.fsPath;
+  // Serialize as storage-root-relative when possible; fall back to
+  // workspace-relative for files outside the resolved RunQL root.
+  const { makeStoredPath } = require('../core/storageRoot') as typeof import('../core/storageRoot');
+  return makeStoredPath(uri).replace(/\\/g, '/');
 }
 
 function relativeUnder(root: vscode.Uri, file: vscode.Uri): string {

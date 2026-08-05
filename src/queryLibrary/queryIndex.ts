@@ -1,9 +1,26 @@
 import * as vscode from 'vscode';
 import { canonicalizeSql } from '../core/hashing';
 import { ensureDPDirs, readJson, writeJson, fileExists } from '../core/fsWorkspace';
+import {
+    isPathUnderRunqlRoot,
+    makeStoredPath,
+    normalizeStoredPath,
+    onDidChangeStorageRoot,
+    resolveStoredPath,
+    tryResolveRunQLRoot,
+} from '../core/storageRoot';
 import { QueryIndexEntry, QueryIndexFile } from './queryIndexer';
 import { parseMdMetadata, buildSearchText } from './mdParser';
 import { Logger } from '../core/logger';
+
+/**
+ * Canonical map key for a URI: storage-root-relative when under the
+ * resolved RunQL root, otherwise workspace-relative (for general SQL
+ * files opened outside RunQL/).
+ */
+function keyForUri(uri: vscode.Uri): string {
+  return makeStoredPath(uri);
+}
 
 export { QueryIndexEntry }; // Re-export for convenience
 
@@ -16,6 +33,8 @@ export class QueryIndex {
 
     private initialized = false;
     private persistencePending = false;
+    private storageRootWatchers: vscode.Disposable | undefined;
+    private storageRootSubscription: vscode.Disposable | undefined;
 
     // Event emitter for search index changes
     private _onDidChange = new vscode.EventEmitter<void>();
@@ -29,31 +48,118 @@ export class QueryIndex {
         // 1. Load existing JSON
         await this.loadFromDisk();
 
-        // 2. Find all SQL files to sync/add new ones
-        const files = await vscode.workspace.findFiles('**/*.{sql,postgres}', '**/node_modules/**');
-
-
-        for (const file of files) {
-            await this.updateFile(file, true); // true = skip save, we'll save once at end
+        // 2. Find all SQL files to sync/add new ones — workspace scope AND
+        //    the resolved storage root when it lives outside the workspace
+        //    (user/custom mode).
+        const workspaceFiles = await vscode.workspace.findFiles(
+            '**/*.{sql,postgres}',
+            '**/node_modules/**'
+        );
+        for (const file of workspaceFiles) {
+            await this.updateFile(file, true);
         }
+        await this.scanStorageRootFiles();
 
-        // 3. Watch for SQL changes
+        // 3. Watch for SQL/markdown changes in the workspace…
         const watcher = vscode.workspace.createFileSystemWatcher('**/*.{sql,postgres}');
         watcher.onDidChange(uri => { this.updateFile(uri); });
         watcher.onDidCreate(uri => { this.updateFile(uri); });
         watcher.onDidDelete(uri => { this.removeFile(uri); });
 
-        // 4. Watch for companion markdown changes
         const mdWatcher = vscode.workspace.createFileSystemWatcher('**/*.md');
         mdWatcher.onDidChange(uri => { this.handleMdChange(uri); });
         mdWatcher.onDidCreate(uri => { this.handleMdChange(uri); });
         mdWatcher.onDidDelete(uri => { this.handleMdDelete(uri); });
 
-        this.initialized = true;
+        // …plus a second set of watchers rooted at the storage root, so
+        // files under `~/.runql/queries/` (user/custom mode) also flow
+        // through the index.
+        this.storageRootWatchers = this.createStorageRootWatchers();
+        // Retain the subscription's Disposable so tests / any code path
+        // that re-invokes initialize() can dispose it before stacking a
+        // second handler (each handler kicks off its own scan+persist
+        // and they race on queryIndex.json). Production hits the
+        // `if (this.initialized) return` guard so this is defensive
+        // rather than load-bearing.
+        this.storageRootSubscription?.dispose();
+        this.storageRootSubscription = onDidChangeStorageRoot(async ({ next }) => {
+            this.storageRootWatchers?.dispose();
+            this.storageRootWatchers = this.createStorageRootWatchers(next?.uri);
+            // Re-scan under the new root so saves made in another window
+            // (or via CLI) show up without waiting on a create event.
+            // Migration flows do their file copy BEFORE the setting
+            // change, so by the time this handler runs, files at the new
+            // root are in place and the scan reflects reality.
+            await this.scanStorageRootFiles();
+            await this.persist();
+        });
 
+        this.initialized = true;
 
         // Initial persist to cleanup stale entries or add new ones
         await this.persist();
+    }
+
+    private createStorageRootWatchers(
+        rootUri?: vscode.Uri
+    ): vscode.Disposable | undefined {
+        const uri = rootUri ?? tryResolveRunQLRoot()?.uri;
+        if (!uri || uri.scheme !== 'file') return undefined;
+        // Skip when the storage root lives inside the workspace: the
+        // workspace-wide watchers above already cover it, and adding a
+        // second overlapping RelativePattern watcher fires duplicate
+        // events.
+        const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+        const rootPath = uri.path.replace(/\/$/, '');
+        for (const f of workspaceFolders) {
+            const fp = f.uri.path.replace(/\/$/, '');
+            if (rootPath === fp || rootPath.startsWith(`${fp}/`)) {
+                return undefined;
+            }
+        }
+        const subs: vscode.Disposable[] = [];
+        const sqlPattern = new vscode.RelativePattern(uri, 'queries/**/*.{sql,postgres}');
+        const sqlWatcher = vscode.workspace.createFileSystemWatcher(sqlPattern);
+        subs.push(sqlWatcher);
+        subs.push(sqlWatcher.onDidChange((u) => { this.updateFile(u); }));
+        subs.push(sqlWatcher.onDidCreate((u) => { this.updateFile(u); }));
+        subs.push(sqlWatcher.onDidDelete((u) => { this.removeFile(u); }));
+        const mdPattern = new vscode.RelativePattern(uri, 'queries/**/*.md');
+        const mdWatcher = vscode.workspace.createFileSystemWatcher(mdPattern);
+        subs.push(mdWatcher);
+        subs.push(mdWatcher.onDidChange((u) => { this.handleMdChange(u); }));
+        subs.push(mdWatcher.onDidCreate((u) => { this.handleMdChange(u); }));
+        subs.push(mdWatcher.onDidDelete((u) => { this.handleMdDelete(u); }));
+        return { dispose: () => subs.forEach((s) => s.dispose()) };
+    }
+
+    private async scanStorageRootFiles(): Promise<void> {
+        const root = tryResolveRunQLRoot();
+        if (!root || root.uri.scheme !== 'file') return;
+        // If the storage root is inside the workspace, findFiles above
+        // already covered it.
+        const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+        const rootPath = root.uri.path.replace(/\/$/, '');
+        for (const f of workspaceFolders) {
+            const fp = f.uri.path.replace(/\/$/, '');
+            if (rootPath === fp || rootPath.startsWith(`${fp}/`)) return;
+        }
+        const files = await vscode.workspace.findFiles(
+            new vscode.RelativePattern(root.uri, 'queries/**/*.{sql,postgres}')
+        );
+        for (const file of files) {
+            await this.updateFile(file, true);
+        }
+        // Best-effort: remove index entries for files that no longer
+        // exist under the storage root.
+        const stale: string[] = [];
+        for (const [key, entry] of this.pathIndex.entries()) {
+            const uri = resolveStoredPath(entry.path);
+            if (!uri) continue;
+            if (!isPathUnderRunqlRoot(uri, root)) continue;
+            if (!(await fileExists(uri))) stale.push(key);
+        }
+        for (const key of stale) this.pathIndex.delete(key);
     }
 
     private async loadFromDisk() {
@@ -65,8 +171,12 @@ export class QueryIndex {
                 const data = await readJson<QueryIndexFile>(indexUri);
                 if (data && data.queries) {
                     for (const q of data.queries) {
+                        // Legacy entries used workspace-relative paths like
+                        // `RunQL/queries/…`. Normalize to storage-root-relative
+                        // on load so lookups match new writes.
+                        q.path = normalizeStoredPath(q.path);
+                        if (q.docPath) q.docPath = normalizeStoredPath(q.docPath);
                         this.pathIndex.set(q.path, q);
-                        // Also populate hash index
                         if (!this.index.has(q.sqlHash)) {
                             this.index.set(q.sqlHash, []);
                         }
@@ -89,7 +199,48 @@ export class QueryIndex {
                 const dpDir = await ensureDPDirs();
                 const indexUri = vscode.Uri.joinPath(dpDir, "system", "queries", "queryIndex.json");
 
-                const entries = Array.from(this.pathIndex.values())
+                // Reload the latest queryIndex.json from disk and merge
+                // with our in-memory state so a concurrent write from
+                // another VS Code window (sharing the same user/custom
+                // storage root) doesn't get clobbered. Union by
+                // storage-root-relative path; on collision keep the
+                // record with the newer `updatedAt`.
+                let onDisk: QueryIndexEntry[] = [];
+                if (await fileExists(indexUri)) {
+                    try {
+                        const data = await readJson<QueryIndexFile>(indexUri);
+                        onDisk = data?.queries ?? [];
+                    } catch {
+                        onDisk = [];
+                    }
+                }
+                const byPath = new Map<string, QueryIndexEntry>();
+                for (const e of onDisk) {
+                    if (!e || !e.path) continue;
+                    e.path = normalizeStoredPath(e.path);
+                    if (e.docPath) e.docPath = normalizeStoredPath(e.docPath);
+                    byPath.set(e.path, e);
+                }
+                for (const e of this.pathIndex.values()) {
+                    if (!e || !e.path) continue;
+                    const existing = byPath.get(e.path);
+                    if (!existing) {
+                        byPath.set(e.path, e);
+                        continue;
+                    }
+                    // Same path in both: prefer the record with the
+                    // later `updatedAt`. Fall back to our in-memory
+                    // record if timestamps are equal or unparseable.
+                    const ourTs = Date.parse(e.updatedAt ?? '');
+                    const diskTs = Date.parse(existing.updatedAt ?? '');
+                    if (Number.isFinite(diskTs) && Number.isFinite(ourTs) && diskTs > ourTs) {
+                        byPath.set(e.path, existing);
+                    } else {
+                        byPath.set(e.path, e);
+                    }
+                }
+
+                const entries = Array.from(byPath.values())
                     .sort((a, b) => a.path.localeCompare(b.path))
                     .map(e => ({
                         connectionId: e.connectionId,
@@ -143,7 +294,7 @@ export class QueryIndex {
             const document = await vscode.workspace.openTextDocument(uri);
             const text = document.getText();
             const { sqlHash } = canonicalizeSql(text);
-            const wsRelative = vscode.workspace.asRelativePath(uri, false);
+            const wsRelative = keyForUri(uri);
             const title = this.extractTitle(text);
 
 
@@ -155,7 +306,7 @@ export class QueryIndex {
                 const mdUri = uri.with({ path: uri.path.replace(/\.sql$/i, '.md') });
                 try {
                     await vscode.workspace.fs.stat(mdUri);
-                    docPath = vscode.workspace.asRelativePath(mdUri, false);
+                    docPath = keyForUri(mdUri);
                     // Read and parse markdown for search metadata
                     const mdBytes = await vscode.workspace.fs.readFile(mdUri);
                     const mdContent = Buffer.from(mdBytes).toString('utf8');
@@ -249,7 +400,7 @@ export class QueryIndex {
         const sqlUri = mdUri.with({ path: sqlPath });
 
         // Check if we track a SQL file with this companion
-        const wsRelative = vscode.workspace.asRelativePath(sqlUri, false);
+        const wsRelative = keyForUri(sqlUri);
         const entry = this.pathIndex.get(wsRelative);
         if (!entry) return;
 
@@ -259,7 +410,7 @@ export class QueryIndex {
             const mdContent = Buffer.from(mdBytes).toString('utf8');
             const mdMeta = parseMdMetadata(mdContent);
 
-            entry.docPath = vscode.workspace.asRelativePath(mdUri, false);
+            entry.docPath = keyForUri(mdUri);
             entry.mdTitle = mdMeta.title;
             entry.mdTags = mdMeta.tags;
             entry.mdSummary = mdMeta.summary;
@@ -303,7 +454,7 @@ export class QueryIndex {
         const sqlPath = mdUri.path.replace(/\.md$/i, '.sql');
         const sqlUri = mdUri.with({ path: sqlPath });
 
-        const wsRelative = vscode.workspace.asRelativePath(sqlUri, false);
+        const wsRelative = keyForUri(sqlUri);
         const entry = this.pathIndex.get(wsRelative);
         if (!entry) return;
 
@@ -339,8 +490,8 @@ export class QueryIndex {
     }
 
     async handleRename(oldUri: vscode.Uri, newUri: vscode.Uri) {
-        const oldRel = vscode.workspace.asRelativePath(oldUri, false);
-        const newRel = vscode.workspace.asRelativePath(newUri, false);
+        const oldRel = keyForUri(oldUri);
+        const newRel = keyForUri(newUri);
 
         // If new extension is not supported, treat as deletion
         if (!newRel.endsWith('.sql') && !newRel.endsWith('.postgres')) {
@@ -377,8 +528,8 @@ export class QueryIndex {
     }
 
     async handleConnectionFolderRename(oldFolder: vscode.Uri, newFolder: vscode.Uri, newName: string) {
-        const oldRel = vscode.workspace.asRelativePath(oldFolder, false).replace(/\\/g, '/');
-        const newRel = vscode.workspace.asRelativePath(newFolder, false).replace(/\\/g, '/');
+        const oldRel = keyForUri(oldFolder).replace(/\\/g, '/');
+        const newRel = keyForUri(newFolder).replace(/\\/g, '/');
         const entries = Array.from(this.pathIndex.entries());
         let changed = false;
 
@@ -419,7 +570,7 @@ export class QueryIndex {
     }
 
     removeFile(uri: vscode.Uri) {
-        const wsRelative = vscode.workspace.asRelativePath(uri, false);
+        const wsRelative = keyForUri(uri);
         if (this.pathIndex.delete(wsRelative)) {
             this.rebuildHashIndex();
             this.persist();
@@ -430,7 +581,7 @@ export class QueryIndex {
     async updateConnectionContext(uri: vscode.Uri, connId: string | null, connName: string | null, dialect: string | null) {
         if (!this.isTracked(uri)) return;
 
-        const wsRelative = vscode.workspace.asRelativePath(uri, false);
+        const wsRelative = keyForUri(uri);
         const entry = this.pathIndex.get(wsRelative);
 
         if (entry) {
@@ -457,7 +608,7 @@ export class QueryIndex {
     async updateLastRun(uri: vscode.Uri) {
         if (!this.isTracked(uri)) return;
 
-        const wsRelative = vscode.workspace.asRelativePath(uri, false);
+        const wsRelative = keyForUri(uri);
         let entry = this.pathIndex.get(wsRelative);
 
         if (!entry) {
@@ -473,7 +624,7 @@ export class QueryIndex {
     }
 
     getEntry(uri: vscode.Uri): QueryIndexEntry | undefined {
-        const wsRelative = vscode.workspace.asRelativePath(uri, false);
+        const wsRelative = keyForUri(uri);
         return this.pathIndex.get(wsRelative);
     }
 
@@ -490,10 +641,8 @@ export class QueryIndex {
     async rebuildSearchMetadata(): Promise<void> {
         const entries = this.getAllEntries();
         for (const entry of entries) {
-            const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-            if (!root) continue;
-
-            const sqlUri = vscode.Uri.joinPath(root, entry.path);
+            const sqlUri = resolveStoredPath(entry.path);
+            if (!sqlUri) continue;
             await this.updateFile(sqlUri, true);
         }
         await this.persist();

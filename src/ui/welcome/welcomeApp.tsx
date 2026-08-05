@@ -13,6 +13,8 @@ const vscode = acquireVsCodeApi();
 type InitStructureEntry = {
     folder: string;
     files: string[];
+    /** Optional per-entry annotation shown next to the folder name. */
+    note?: string;
 };
 
 type StructureIconKind = 'folder' | 'file';
@@ -42,18 +44,52 @@ type ConnectorDoc = {
     summary: string;
 };
 
-// Folder + default file structure that Initialize creates
-const INIT_STRUCTURE: InitStructureEntry[] = [
-    { folder: '(project root)', files: ['AGENTS.md (or AGENTS_RUNQL.md)', 'README_RUNQL.md'] },
-    { folder: 'RunQL', files: [] },
-    { folder: 'RunQL/queries', files: ['<connection>/<query>.sql', '<connection>/<query>.md'] },
-    { folder: 'RunQL/schemas', files: ['<connection>/manifest.json', '<connection>/<schema>/schema.json', '<connection>/<schema>/description.json', '<connection>/<schema>/custom.relationships.json', '<connection>/<schema>/erd.json', '<connection>/<schema>/erd.layout.json'] },
-    { folder: 'RunQL/system', files: [] },
-    { folder: 'RunQL/system/queries', files: ['queryIndex.json', 'queryHistory.json (after first query run)'] },
+// Folder + default file structure that Initialize creates.
+// One generic layout that applies across all storage modes; only the
+// meaning of "<storage-root>" and the presence of `.runql-link/` differ,
+// and both are called out in prose alongside the trees.
+
+const STORAGE_TREE_ENTRIES: InitStructureEntry[] = [
+    { folder: '<storage-root>/', files: [] },
     {
-        folder: 'RunQL/system/prompts',
-        files: ['markdownDoc.txt', 'inlineComments.txt', 'describeSchema.txt']
-    }
+        folder: '<storage-root>/queries/',
+        files: ['<connection>/<query>.sql', '<connection>/<query>.md'],
+    },
+    {
+        folder: '<storage-root>/schemas/',
+        files: [
+            '<connection>/manifest.json',
+            '<connection>/<schema>/schema.json',
+            '<connection>/<schema>/description.json',
+            '<connection>/<schema>/custom.relationships.json',
+            '<connection>/<schema>/erd.json',
+            '<connection>/<schema>/erd.layout.json',
+        ],
+    },
+    { folder: '<storage-root>/system/', files: [] },
+    {
+        folder: '<storage-root>/system/queries/',
+        files: ['queryIndex.json', 'queryHistory.json (after first query run)'],
+    },
+    {
+        folder: '<storage-root>/system/prompts/',
+        files: ['markdownDoc.txt', 'inlineComments.txt', 'describeSchema.txt'],
+    },
+];
+
+const PROJECT_ROOT_ENTRIES: InitStructureEntry[] = [
+    {
+        folder: '(project root)',
+        files: ['AGENTS.md', 'README_RUNQL.md'],
+    },
+    {
+        folder: '.runql-link/',
+        files: [
+            'storage-root.json (authoritative link marker)',
+            'ref.json (agent-readable mirror)',
+        ],
+        note: 'Only created for User-level and Custom location storage modes',
+    },
 ];
 
 const AI_SETTINGS: AISettingDoc[] = [
@@ -495,13 +531,52 @@ function StructureIcon({ kind }: { kind: StructureIconKind }) {
     );
 }
 
+function StructureList({ entries }: { entries: InitStructureEntry[] }) {
+    return (
+        <ul style={styles.folderList}>
+            {entries.map(({ folder, files, note }) => (
+                <li key={folder} style={styles.folderItem}>
+                    {note && (
+                        <div
+                            style={{
+                                fontSize: '11px',
+                                fontStyle: 'italic',
+                                color: 'var(--vscode-descriptionForeground)',
+                                marginBottom: '2px',
+                            }}
+                        >
+                            {note}
+                        </div>
+                    )}
+                    <div style={{ ...styles.folderName, ...styles.structureLabel }}>
+                        <StructureIcon kind="folder" />
+                        <span style={styles.structureText}>{folder}</span>
+                    </div>
+                    {files.length > 0 ? (
+                        <ul style={styles.fileList}>
+                            {files.map((file) => (
+                                <li key={`${folder}/${file}`} style={{ ...styles.fileItem, ...styles.structureRow }}>
+                                    <StructureIcon kind="file" />
+                                    <span style={styles.structureText}>{file}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    ) : (
+                        <div style={styles.emptyFolder}>No default files at initialization</div>
+                    )}
+                </li>
+            ))}
+        </ul>
+    );
+}
+
 function CollapsibleSection({
     title,
     children,
     defaultOpen = false,
     id
 }: {
-    title: string;
+    title: React.ReactNode;
     children: React.ReactNode;
     defaultOpen?: boolean;
     id?: string;
@@ -579,12 +654,33 @@ function renderWhatsNewEntry(entry: ChangelogEntry | null, version: string) {
     );
 }
 
+type StorageStatus = {
+    location: 'workspace' | 'user' | 'custom';
+    customPath: string;
+    userPath: string;
+    codespacesPath: string;
+    resolvedPath: string | null;
+    resolvedLocation: 'workspace' | 'user' | 'custom' | null;
+    codespaces: boolean;
+    workspaceFolderCount: number;
+};
+
 function App() {
     const [initialized, setInitialized] = useState<boolean | null>(null);
     const [hasWorkspace, setHasWorkspace] = useState<boolean | null>(null);
     const [mode, setMode] = useState<WelcomeMode>('welcome');
     const [version, setVersion] = useState<string>('');
     const [whatsNewEntry, setWhatsNewEntry] = useState<ChangelogEntry | null>(null);
+    const [storage, setStorage] = useState<StorageStatus | null>(null);
+    const [customPathDraft, setCustomPathDraft] = useState<string>('');
+    // Local "pending" selection that overrides the server-side
+    // storage.location visually while a migration prompt is in flight
+    // or while the user is still entering a custom path. Cleared as
+    // soon as a fresh setStatus arrives from the extension — so if the
+    // user cancels the migration dialog, the radio reverts naturally
+    // because the extension's authoritative storage.location never
+    // changed.
+    const [pendingLocation, setPendingLocation] = useState<'workspace' | 'user' | 'custom' | null>(null);
 
     useEffect(() => {
         // Listen for messages from extension
@@ -596,6 +692,33 @@ function App() {
                 setMode((message.mode as WelcomeMode) || 'welcome');
                 setVersion((message.version as string) || '');
                 setWhatsNewEntry((message.whatsNewEntry as ChangelogEntry | undefined) || null);
+                const incoming = (message.storage as StorageStatus | undefined) ?? null;
+                setStorage((prevStorage) => {
+                    // Clear pending only when the server-side location
+                    // actually changed OR matches what the user was
+                    // pending. This prevents an unrelated status refresh
+                    // (workspace-folders change, other-window storage
+                    // event) from clobbering an in-progress custom-path
+                    // entry the user is still typing into.
+                    if (
+                        !prevStorage ||
+                        !incoming ||
+                        prevStorage.location !== incoming.location
+                    ) {
+                        setPendingLocation(null);
+                    } else {
+                        setPendingLocation((pending) =>
+                            pending && pending === incoming.location ? null : pending
+                        );
+                    }
+                    return incoming;
+                });
+                if (incoming) {
+                    setCustomPathDraft((prev) => (prev === '' ? incoming.customPath : prev));
+                }
+            } else if (message.command === 'customPathPicked') {
+                const fsPath = typeof message.fsPath === 'string' ? message.fsPath : '';
+                if (fsPath) setCustomPathDraft(fsPath);
             }
         };
         window.addEventListener('message', handler);
@@ -606,8 +729,49 @@ function App() {
         return () => window.removeEventListener('message', handler);
     }, []);
 
+    const handleSelectStorageLocation = (location: 'workspace' | 'user' | 'custom') => {
+        // Show the click visually while the migration dialog runs (or,
+        // for custom, while the user enters a path).
+        setPendingLocation(location);
+        if (location === 'custom') {
+            // Wait for the user to enter a path and click Save — that's
+            // when we commit the change.
+            return;
+        }
+        vscode.postMessage({ command: 'changeStorageLocation', location });
+    };
+
+    const handleSaveCustomPath = () => {
+        vscode.postMessage({
+            command: 'changeStorageLocation',
+            location: 'custom',
+            customPath: customPathDraft,
+        });
+    };
+
+    const handleBrowseCustomPath = () => {
+        vscode.postMessage({ command: 'browseCustomPath' });
+    };
+
+    const handleOpenStorageFolder = () => {
+        vscode.postMessage({ command: 'openStorageFolder' });
+    };
+
     const handleInitialize = () => {
-        if (!hasWorkspace) {
+        // Refuse to initialize while the user has a pending storage-mode
+        // change that hasn't been committed. Otherwise clicking
+        // Initialize would run against `storage.location` (the old,
+        // server-side value) while the radio visibly shows the user's
+        // intended new choice — silently scaffolding in the wrong place.
+        if (pendingLocation && storage && pendingLocation !== storage.location) {
+            const msg = pendingLocation === 'custom'
+                ? 'Enter a custom storage path and click Save before initializing.'
+                : `Commit the pending "${pendingLocation}" storage-location change before initializing.`;
+            vscode.postMessage({ command: 'showWarning', message: msg });
+            return;
+        }
+        const location = storage?.location ?? 'workspace';
+        if (location === 'workspace' && !hasWorkspace) {
             return;
         }
         vscode.postMessage({ command: 'initialize' });
@@ -625,6 +789,10 @@ function App() {
         vscode.postMessage({ command: 'openSettings' });
     };
 
+    const handleOpenAiSettings = () => {
+        vscode.postMessage({ command: 'openAiSettings' });
+    };
+
     const handleOpenReadme = () => {
         vscode.postMessage({ command: 'openReadme' });
     };
@@ -633,12 +801,22 @@ function App() {
         vscode.postMessage({ command: 'openExtensionSearch', extensionQuery });
     };
 
-    const step1Complete = hasWorkspace === true;
+    const workspaceRequired = storage?.location !== 'user' && storage?.location !== 'custom';
+    const canResolveStorage = storage?.resolvedPath != null;
+    const step1Complete = workspaceRequired ? hasWorkspace === true : canResolveStorage;
     const step2Complete = initialized === true;
-    const step1Active = hasWorkspace === false;
-    const step2Active = hasWorkspace === true && initialized === false;
+    const step1Active = workspaceRequired ? hasWorkspace === false : !canResolveStorage;
+    const step2Active = step1Complete && initialized === false;
     const isWhatsNew = mode === 'whatsNew';
     const canUseInitializedActions = initialized === true;
+    // Block Initialize while the user has an uncommitted storage-mode
+    // change pending (radio selection that hasn't been saved). Prevents
+    // scaffolding against the visibly-stale server-side location.
+    const hasPendingStorageChange =
+        pendingLocation !== null &&
+        !!storage &&
+        pendingLocation !== storage.location;
+    const canInitialize = !hasPendingStorageChange && (workspaceRequired ? hasWorkspace === true : canResolveStorage);
 
     return (
         <div style={styles.container}>
@@ -649,7 +827,8 @@ function App() {
                 </h1>
                 {!isWhatsNew && (
                     <p style={styles.trustStatement}>
-                        RunQL will not create project files until you click Initialize.
+                        Welcome. You're four clicks away from getting better context for AI assistance for your data work.
+                        Pick where RunQL should keep your files, initialize, and then select your preferred AI in the RunQL settings (Codex, Claude Code, or others).
                     </p>
                 )}
             </div>
@@ -657,31 +836,40 @@ function App() {
             {isWhatsNew && renderWhatsNewEntry(whatsNewEntry, version)}
 
             {/* Workspace Status */}
-            <div style={styles.card}>
-                <h2 style={styles.cardTitle}><span style={{ marginRight: '4px' }}>Workspace Status </span>
-                    {initialized === null ? (
-                        <span style={{ ...styles.statusBadge, backgroundColor: 'var(--vscode-descriptionForeground)', fontSize: '9px' }}>
-                            Checking...
-                        </span>
-                    ) : initialized ? (
-                        <span style={{ ...styles.statusBadge, ...styles.statusInitialized, fontSize: '9px' }}>
-                            ✓ Initialized
-                        </span>
-                    ) : (
-                        <span style={{ ...styles.statusBadge, ...styles.statusNotInitialized, fontSize: '9px' }}>
-                            Not Initialized
-                        </span>
-                )}
-                </h2>
-                <div style={styles.statusPanel}>
-                    {hasWorkspace === false && (
+            {(() => {
+                const setupTitle = (
+                    <>
+                        <span style={{ marginRight: '4px' }}>Setup Steps </span>
+                        {initialized === null ? (
+                            <span style={{ ...styles.statusBadge, backgroundColor: 'var(--vscode-descriptionForeground)', fontSize: '9px' }}>
+                                Checking...
+                            </span>
+                        ) : initialized ? (
+                            <span style={{ ...styles.statusBadge, ...styles.statusInitialized, fontSize: '9px' }}>
+                                ✓ Initialized
+                            </span>
+                        ) : (
+                            <span style={{ ...styles.statusBadge, ...styles.statusNotInitialized, fontSize: '9px' }}>
+                                Not Initialized
+                            </span>
+                        )}
+                    </>
+                );
+                const setupBody = (
+                    <div style={styles.statusPanel}>
+                    {workspaceRequired && hasWorkspace === false && (
                         <p style={styles.statusNote}>
-                            Open or create a project folder, then initialize RunQL.
+                            Open or create a project folder, then initialize RunQL. (Or switch to user-level storage below.)
                         </p>
                     )}
-                    {hasWorkspace === true && initialized === false && (
+                    {!workspaceRequired && !canResolveStorage && (
                         <p style={styles.statusNote}>
-                            Step 1 is complete. Now Initialize RunQL.
+                            Configure a valid storage path below, then initialize RunQL.
+                        </p>
+                    )}
+                    {step1Complete && initialized === false && (
+                        <p style={styles.statusNote}>
+                            Storage is ready. Now Initialize RunQL.
                         </p>
                     )}
                     {initialized === true && (
@@ -689,10 +877,121 @@ function App() {
                             RunQL is initialized.
                         </p>
                     )}
+                    {storage && (
+                        <div style={{ marginTop: 12, marginBottom: 12, padding: 12, border: '1px solid var(--vscode-panel-border)', borderRadius: 4 }}>
+                            <div style={{ ...styles.stepLabel, marginBottom: 6 }}>
+                                STEP 1 — STORAGE LOCATION
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                                    <input
+                                        type="radio"
+                                        name="storageLocation"
+                                        value="workspace"
+                                        checked={(pendingLocation ?? storage.location) === 'workspace'}
+                                        onChange={() => handleSelectStorageLocation('workspace')}
+                                        style={{ marginTop: 3 }}
+                                    />
+                                    <span>
+                                        <strong>Workspace folder</strong>
+                                        <span style={{ display: 'block', fontSize: '11px', color: 'var(--vscode-descriptionForeground)' }}>
+                                            Stores RunQL files in this project.
+                                        </span>
+                                    </span>
+                                </label>
+                                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                                    <input
+                                        type="radio"
+                                        name="storageLocation"
+                                        value="user"
+                                        checked={(pendingLocation ?? storage.location) === 'user'}
+                                        onChange={() => handleSelectStorageLocation('user')}
+                                        style={{ marginTop: 3 }}
+                                    />
+                                    <span>
+                                        <strong>User-level folder</strong>
+                                        <span style={{ display: 'block', fontSize: '11px', color: 'var(--vscode-descriptionForeground)' }}>
+                                            One system-user location for RunQL files across all your projects on this {storage.codespaces ? 'Codespace' : 'machine'}.
+                                        </span>
+                                    </span>
+                                </label>
+                                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                                    <input
+                                        type="radio"
+                                        name="storageLocation"
+                                        value="custom"
+                                        checked={(pendingLocation ?? storage.location) === 'custom'}
+                                        onChange={() => handleSelectStorageLocation('custom')}
+                                        style={{ marginTop: 3 }}
+                                    />
+                                    <span>
+                                        <strong>Custom folder</strong>
+                                        <span style={{ display: 'block', fontSize: '11px', color: 'var(--vscode-descriptionForeground)' }}>
+                                            Stores RunQL files in a path you choose - outside of your project folder.
+                                        </span>
+                                    </span>
+                                </label>
+                            </div>
+                            {(pendingLocation ?? storage.location) === 'custom' && (
+                                <div style={{ marginTop: 8, marginBottom: 8 }}>
+                                    <div style={{ display: 'flex', gap: 6 }}>
+                                        <input
+                                            type="text"
+                                            value={customPathDraft}
+                                            onChange={(e) => setCustomPathDraft(e.target.value)}
+                                            placeholder="/absolute/path/to/.runql"
+                                            style={{
+                                                flex: 1,
+                                                padding: '4px 6px',
+                                                backgroundColor: 'var(--vscode-input-background)',
+                                                color: 'var(--vscode-input-foreground)',
+                                                border: '1px solid var(--vscode-input-border)',
+                                                borderRadius: 2,
+                                                fontSize: '12px',
+                                            }}
+                                        />
+                                        <button style={{ ...styles.button, ...styles.primaryButton }} onClick={handleSaveCustomPath}>
+                                            Save
+                                        </button>
+                                        <button style={{ ...styles.button, ...styles.secondaryButton }} onClick={handleBrowseCustomPath}>
+                                            Browse…
+                                        </button>
+                                    </div>
+                                    {pendingLocation === 'custom' && storage.location !== 'custom' && (
+                                        <div style={{ marginTop: 4, fontSize: '11px', color: 'var(--vscode-descriptionForeground)' }}>
+                                            Enter a path and click <strong>Save</strong> to commit the change. Cancel to revert.
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            <div style={{ fontSize: '11px', color: 'var(--vscode-descriptionForeground)', marginTop: 6 }}>
+                                Current storage location:{' '}
+                                {storage.resolvedPath ? (
+                                    <>
+                                        <div>You can switch storage modes anytime - RunQL moves your files for you.</div>
+                                        <div>
+                                            <code style={{ fontSize: '11px' }}>{storage.resolvedPath}</code>{' '}
+                                            <button style={{ ...styles.button, ...styles.secondaryButton, padding: '0 6px', fontSize: '10px' }} onClick={handleOpenStorageFolder}>
+                                                Open
+                                            </button>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <em>
+                                        {storage.location === 'workspace' && storage.workspaceFolderCount === 0
+                                            ? 'Open a folder to enable workspace storage.'
+                                            : storage.location === 'custom'
+                                                ? 'Enter a valid absolute path above.'
+                                                : 'Unresolvable.'}
+                                    </em>
+                                )}
+                            </div>
+                        </div>
+                    )}
                     {initialized !== null && (
                         <div style={styles.actionRow}>
                             <div style={styles.stepAction}>
-                                <div style={styles.stepLabel}>STEP 1</div>
+                                <div style={styles.stepLabel}>STEP 2</div>
                                 <button
                                     style={{
                                         ...styles.button,
@@ -715,7 +1014,7 @@ function App() {
                                 </button>
                             </div>
                             <div style={styles.stepAction}>
-                                <div style={styles.stepLabel}>STEP 2</div>
+                                <div style={styles.stepLabel}>STEP 3</div>
                                 <button
                                     style={{
                                         ...styles.button,
@@ -728,13 +1027,15 @@ function App() {
                                         })
                                     }}
                                     onClick={handleInitialize}
-                                    disabled={!hasWorkspace || initialized === true}
+                                    disabled={!canInitialize || initialized === true}
                                     title={
                                         initialized === true
                                             ? 'RunQL is already initialized.'
-                                            : hasWorkspace
+                                            : canInitialize
                                                 ? 'Initialize RunQL'
-                                                : 'Open a folder to enable initialization.'
+                                                : workspaceRequired
+                                                    ? 'Open a folder to enable initialization.'
+                                                    : 'Configure a valid storage location above to enable initialization.'
                                     }
                                 >
                                     Initialize RunQL
@@ -751,6 +1052,43 @@ function App() {
                             </div>
                         </div>
                     )}
+                    </div>
+                );
+                return initialized === true ? (
+                    <CollapsibleSection title={setupTitle} defaultOpen={false}>
+                        {setupBody}
+                    </CollapsibleSection>
+                ) : (
+                    <div style={styles.card}>
+                        <h2 style={styles.cardTitle}>{setupTitle}</h2>
+                        {setupBody}
+                    </div>
+                );
+            })()}
+
+            {/* AI Settings */}
+            <div style={styles.card}>
+                <h2 style={styles.cardTitle}>Connect your AI (optional — skip if you don't want AI)</h2>
+                <div style={styles.statusPanel}>
+                    <p style={styles.statusNote}>
+                        Point RunQL at any AI you already use - GitHub Copilot, Claude Code, Codex, your own API key — or skip this and turn it on later. Your AI interacts with RunQL for context to enable query generation, schema descriptions, inline comments, and more.
+                    </p>
+                    <div style={styles.actionRow}>
+                        <div style={styles.stepAction}>
+                            <div style={styles.stepLabel}>STEP 4</div>
+                            <button
+                                style={{
+                                    ...styles.button,
+                                    ...styles.primaryButton,
+                                    marginRight: 0,
+                                }}
+                                onClick={handleOpenAiSettings}
+                                title="Open the RunQL AI Settings in the VS Code Settings editor"
+                            >
+                                Open AI Settings
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -790,7 +1128,7 @@ function App() {
                     </button>
                 </div>
                 <p style={{ ...styles.statusNote, marginBottom: 0 }}>
-                    Add a connection anytime by clicking on the RunQL icon in the left navigation panel, and clicking the + in the Explorer Panel.
+                    Add a connection anytime by clicking on the RunQL icon in the Activity Bar (left navigation), and clicking the + in the Explorer View Panel.
                 </p>
             </div>
 
@@ -816,7 +1154,7 @@ function App() {
 
             <CollapsibleSection title="Optional VSCode Marketplace Configuration & Github Copilot">
                 <p style={styles.statusNote}>
-                    Add the VS Code Marketplace if you want to use GitHub Copilot. Official extensions for Claude Code and Codex are available in both OpenVSX and the VS Code Marketplace.  Open-source builds builds cannot ship the VSCode Marketplace as the default but you are allowed to enable it.
+                    Add the VS Code Marketplace if you want to use GitHub Copilot. Official extensions for Claude Code and Codex are available in both OpenVSX and the VS Code Marketplace.  Open-source builds cannot ship the VSCode Marketplace as the default but you are allowed to enable it.
                 </p>
                 <p style={styles.statusNote}>
                     To add the VS Code Marketplace, create or open <code>product.json</code>, add or merge this top-level <code>extensionsGallery</code> configuration, then restart the IDE.
@@ -837,43 +1175,36 @@ function App() {
             {/* What Initialize Creates */}
             <CollapsibleSection title="What does initialization do?">
                 <div style={{ marginTop: '10px', marginBottom: '10px' }}>
-                    Creates default folders and prompt files for SQL, schema, and ERD workflows.
+                    Initialization creates default folders and files for SQL, schema, and ERD workflows.
                 </div>
-                <div style={{ marginTop: '10px', marginBottom: '10px', fontSize: '13px', color: 'var(--vscode-descriptionForeground)' }}>
-                    Resultset editing is enabled by default. You can disable it in RunQL Settings
-                    (<code>runql.results.editing.enabled</code>).
+
+                <div style={{ marginTop: '8px', marginBottom: '6px', fontSize: '13px', fontWeight: 600 }}>
+                    RunQL data (queries, schemas, prompts, indexes):
                 </div>
-                <ul style={styles.folderList}>
-                    {INIT_STRUCTURE.map(({ folder, files }) => (
-                        <li key={folder} style={styles.folderItem}>
-                            <div style={{ ...styles.folderName, ...styles.structureLabel }}>
-                                <StructureIcon kind="folder" />
-                                <span style={styles.structureText}>{folder}</span>
-                            </div>
-                            {files.length > 0 ? (
-                                <ul style={styles.fileList}>
-                                    {files.map((file) => (
-                                        <li key={`${folder}/${file}`} style={{ ...styles.fileItem, ...styles.structureRow }}>
-                                            <StructureIcon kind="file" />
-                                            <span style={styles.structureText}>{file}</span>
-                                        </li>
-                                    ))}
-                                </ul>
-                            ) : (
-                                <div style={styles.emptyFolder}>No default files at initialization</div>
-                            )}
-                        </li>
-                    ))}
-                </ul>
+                <div style={{ fontSize: '13px', color: 'var(--vscode-descriptionForeground)', marginBottom: '6px' }}>
+                    <code>&lt;storage-root&gt;</code> is <code>&lt;project&gt;/RunQL/</code> in
+                    {' '}<strong>Workspace folder</strong> mode, <code>~/.runql/</code> in
+                    {' '}<strong>User-level</strong> mode, or the path you chose in
+                    {' '}<strong>Custom folder</strong> mode.
+                </div>
+                <StructureList entries={STORAGE_TREE_ENTRIES} />
+
+                <div style={{ marginTop: '14px', marginBottom: '6px', fontSize: '13px', fontWeight: 600 }}>
+                    Project-local RunQL files (in every workspace folder linked to RunQL):
+                </div>
+                <StructureList entries={PROJECT_ROOT_ENTRIES} />
+
                 <div style={{ marginTop: '10px', marginBottom: '10px' }}>
                     <div style={{ ...styles.folderName, ...styles.structureRow, marginBottom: '6px' }}>
                         <StructureIcon kind="file" />
-                        <span style={styles.structureText}>Initialization files:</span>
+                        <span style={styles.structureText}>Guidance files (<code>AGENTS.md</code>, <code>README_RUNQL.md</code>):</span>
                     </div>
                     <div style={{ fontSize: '13px', lineHeight: 1.5 }}>
-                        RunQL creates <code>AGENTS.md</code> and <code>README_RUNQL.md</code> in your project root.
+                        <code>AGENTS.md</code> is used to give AI Agents instructions. RunQL only modifies a section inside <code>AGENTS.md</code> (delimited by
+                        {' '}<code>&lt;!-- RUNQL:BEGIN --&gt;</code> / <code>&lt;!-- RUNQL:END --&gt;</code> markers). Unrelated content is
+                        never touched.  If the file does not exist then RunQL will create it.
                         <br />
-                        If <code>AGENTS.md</code> already exists, it creates <code>AGENTS_RUNQL.md</code> instead.
+                        <code>README_RUNQL.md</code> contains some details about how RunQL helps you.
                     </div>
                 </div>
             </CollapsibleSection>

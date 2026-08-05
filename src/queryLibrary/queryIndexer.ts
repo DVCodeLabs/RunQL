@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { canonicalizeSql } from "../core/hashing";
 import { ensureDPDirs, writeJson } from "../core/fsWorkspace";
+import { isPathUnderRunqlRoot, makeStoredPath, tryResolveRunQLRoot } from "../core/storageRoot";
 
 export interface QueryIndexFile {
   version: "0.1";
@@ -32,15 +33,34 @@ export interface QueryIndexEntry {
   searchUpdatedAt?: string;    // last time search fields were derived
 }
 
+// Excludes only known-parent RunQL system folders. Do NOT include a bare
+// `system` here — that would match any user folder called `system`
+// anywhere in the workspace (`apps/system/queries/*.sql`, etc.) and
+// silently drop those files from the index. Custom-path storage roots
+// inside the workspace are handled by the runtime filter below, not by
+// this glob.
 const EXCLUDE_GLOB =
-  "**/{node_modules,dist,out,.git,RunQL/system}/**";
+  "**/{node_modules,dist,out,.git,RunQL/system,.runql/system}/**";
 
 export async function rebuildQueryIndex(): Promise<void> {
   const dpDir = await ensureDPDirs();
   const indexUri = vscode.Uri.joinPath(dpDir, "system", "queries", "queryIndex.json");
 
-  // VS Code findFiles exclude pattern doesn't need wrapping braces if it's a single string with braces inside
-  const sqlFiles = await vscode.workspace.findFiles("**/*.sql", EXCLUDE_GLOB);
+  // Post-filter: `findFiles` above can't know where a custom-path
+  // storage root is, so drop anything that falls under the resolved
+  // RunQL root's `system/` at runtime.
+  const runqlRoot = tryResolveRunQLRoot();
+  const runqlSystemPath = runqlRoot
+    ? runqlRoot.uri.path.replace(/\/$/, '') + '/system'
+    : undefined;
+  const rawFiles = await vscode.workspace.findFiles("**/*.sql", EXCLUDE_GLOB);
+  const sqlFiles = runqlSystemPath
+    ? rawFiles.filter((uri) => {
+        const p = uri.path;
+        return p !== runqlSystemPath && !p.startsWith(runqlSystemPath + '/');
+      })
+    : rawFiles;
+  void isPathUnderRunqlRoot; // reserved for future callers
 
   const entries: QueryIndexEntry[] = [];
 
@@ -50,7 +70,7 @@ export async function rebuildQueryIndex(): Promise<void> {
     const { sqlHash } = canonicalizeSql(text);
     const title = extractTitle(text);
 
-    const wsRelative = vscode.workspace.asRelativePath(file, false);
+    const wsRelative = makeStoredPath(file);
     const stat = await vscode.workspace.fs.stat(file);
 
     // Check for companion markdown

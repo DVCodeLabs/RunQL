@@ -9,6 +9,7 @@ import {
   RoutineParameterModel,
 } from '../core/types';
 import { ensureDPDirs, readJson, writeJson, fileExists } from '../core/fsWorkspace';
+import { makeStoredPath } from '../core/storageRoot';
 import { SchemaDescriptionsFile } from './descriptionStore';
 import { Logger } from '../core/logger';
 import {
@@ -252,11 +253,9 @@ function mergeSchemaIntrospection(
 }
 
 function workspaceRelative(uri: vscode.Uri): string {
-  if (typeof vscode.workspace.asRelativePath === 'function') {
-    return vscode.workspace.asRelativePath(uri, false).replace(/\\/g, '/');
-  }
-  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  return root ? uri.fsPath.replace(`${root}/`, '').replace(/\\/g, '/') : uri.fsPath;
+  // Serialize schema paths storage-root-relative so they resolve correctly
+  // when the RunQL data root lives outside the workspace folder.
+  return makeStoredPath(uri).replace(/\\/g, '/');
 }
 
 function uriBaseName(uri: vscode.Uri): string {

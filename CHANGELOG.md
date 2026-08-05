@@ -65,7 +65,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 Redesign AI settings, add What's New guidance, and normalize AI settings across user/workspace scopes
 
 - replace internal AI terminology with clearer user-facing settings: AI Source, AI Extension, API Provider, AI Model, and API Base URL
-- set new defaults to GitHub Copilot / VS Code AI, Automatic extension, and gpt-4.1
+- set new defaults to GitHub Copilot / VS Code AI, Automatic extension, and GPT-4.1
 - remove deprecated AI settings from the settings manifest
 - add a What's New page for upgrades and expose a command to reopen it
 - add an AI Settings Guide to the welcome page for new installs
@@ -89,8 +89,8 @@ Redesign AI settings, add What's New guidance, and normalize AI settings across 
 
 ### Added
 1. Use effective SQL dialect for SecureQL AI prompts and query metadata
-- Centralize AI connection dialect resolution on resolveEffectiveSqlDialect() so SecureQL-backed prompts receive the underlying database dialect rather than the connector name.
-- Update query markdown/frontmatter and per-document query index context to persist the effective SQL dialect consistently, while leaving adapter routing on the raw connector dialect.
+   - Centralize AI connection dialect resolution on resolveEffectiveSqlDialect() so SecureQL-backed prompts receive the underlying database dialect rather than the connector name.
+   - Update query markdown/frontmatter and per-document query index context to persist the effective SQL dialect consistently, while leaving adapter routing on the raw connector dialect.
 
 2. Move ERD artifacts into per-connection schema bundles and stop using RunQL/system/erd at runtime.
 
@@ -156,7 +156,7 @@ Archive deleted schema(s) during introspection refresh
 
 ### Changes
 - Changes to ensure QueryIndex and QueryHistory get updated if a connection is renamed.
-- Add product gif for readme.
+- Add product Gif for readme.
 
 ## [1.10.0] 
 
@@ -173,7 +173,7 @@ Archive deleted schema(s) during introspection refresh
 
 ### Changes
 - Added default column width in results grid for JSON/text in v1.11.1. The items below were released in v1.11.0.
-- Fixed JSON object display issues in the results grid. Thanks Pat and Harsh!
+- Fixed JSON object display issues in the results grid. Thanks to Pat and Harsh!
 - Updated cell editing behaviour: single-click now selects a cell, double-click opens the cell for editing.
 - Improved cell editing for JSON and text fields (scrolling).
 - Improved cell copy functionality:
@@ -209,7 +209,7 @@ Archive deleted schema(s) during introspection refresh
 
 ### Changes
 
-- Add RunQL query save buttons with Cmd+Shift+S, editor title/CodeLens actions, overwrite-or-copy handling, companion markdown metadata, and query index refreshes.
+- Add RunQL query save buttons with Cmd+Shift+S, editor title/CodeLens actions, overwrite-or-copy handling, companion Markdown metadata, and query index refreshes.
 - Persist schema context per SQL query, surface it in CodeLens, restore it from saved query metadata, and pass catalog/schema context through query runs, scripts, approvals when using SecureQL.
 - Store schema/catalog context in saved query metadata and schema snapshots.
 - Refresh stale SecureQL connection IDs when API keys change for a connection.
@@ -223,5 +223,19 @@ Archive deleted schema(s) during introspection refresh
 
 ### Changes
 
-- Remove focusing the RunQL container on every IDE launch for non-RunQL IDEs and in Github Code Spaces.
-- The RunQL container will only get focused on the very first install of RunQL in non-RunQL IDEs and in Github Code Spaces.
+- Remove focusing the RunQL container on every IDE launch for non-RunQL IDEs and in GitHub Code Spaces.
+- The RunQL container will only get focused on the very first install of RunQL in non-RunQL IDEs and in GitHub Code Spaces.
+
+## [1.16.0]
+
+### Changes
+
+#### Support for developers using RunQL with multiple code projects or GitHub Codespaces.
+
+RunQL now lets you choose where your RunQL files are stored.  You have three options:
+1. Project workspace = project-specific RunQL workspace (a project directory typically used for commiting query assets)
+2. User home = one personal RunQL workspace usable across all code projects (local or Codespaces)
+    - macOS/Linux: ~/.runql 
+    - Windows: %USERPROFILE%\.runql 
+    - Codespaces: /workspaces/.runql 
+3. Custom path = explicit folder you control

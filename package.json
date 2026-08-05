@@ -27,7 +27,7 @@
     "erd",
     "ai"
   ],
-  "version": "1.15.1",
+  "version": "1.16.0",
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -88,6 +88,21 @@
         "command": "runql.project.initialize",
         "title": "RunQL: Initialize Project",
         "icon": "$(folder)"
+      },
+      {
+        "command": "runql.storage.changeLocation",
+        "title": "RunQL: Change Storage Location",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "runql.storage.openFolder",
+        "title": "RunQL: Open Storage Folder",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "runql.storage.moveFolder",
+        "title": "RunQL: Move Storage Folder",
+        "icon": "$(arrow-right)"
       },
       {
         "command": "runql.connection.add",
@@ -529,6 +544,51 @@
           ],
           "default": "sql",
           "description": "RunQL: Fallback dialect to use if no active connection is selected."
+        },
+        "runql.storage.location": {
+          "type": "string",
+          "order": 100,
+          "enum": [
+            "workspace",
+            "user",
+            "custom"
+          ],
+          "enumItemLabels": [
+            "Workspace folder",
+            "User-level folder",
+            "Custom folder"
+          ],
+          "default": "workspace",
+          "scope": "machine-overridable",
+          "markdownDescription": "RunQL: Choose where RunQL stores queries, schema snapshots, connection profiles, and local system files.\n\nUse the RunQL Welcome page or `RunQL: Change Storage Location` to change this after setup so RunQL can offer to move or link existing files safely."
+        },
+        "runql.storage.userPath": {
+          "type": "string",
+          "order": 101,
+          "default": "~/.runql",
+          "scope": "machine",
+          "markdownDescription": "RunQL: User-level storage path used outside Codespaces. `~` expands to the current OS user's home directory."
+        },
+        "runql.storage.codespacesPath": {
+          "type": "string",
+          "order": 102,
+          "default": "/workspaces/.runql",
+          "scope": "machine",
+          "markdownDescription": "RunQL: User-level storage path used when running inside GitHub Codespaces."
+        },
+        "runql.storage.customPath": {
+          "type": "string",
+          "order": 103,
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "RunQL: Custom storage path used when `Storage Location` is `Custom folder`. `~` expands to the current OS user's home directory."
+        },
+        "runql.storage.workspaceFolder": {
+          "type": "string",
+          "order": 104,
+          "default": "",
+          "scope": "window",
+          "markdownDescription": "RunQL: Workspace folder URI that owns the workspace-local RunQL directory in multi-root workspace mode. Used only when Storage Location is `Workspace folder` and more than one workspace folder is open."
         }
       }
     },

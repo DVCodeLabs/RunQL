@@ -8,6 +8,8 @@ import { resolveEffectiveSqlDialect } from '../core/sqlUtils';
 import type { QuerySchemaContext } from '../core/types';
 import { queryIndex } from './queryIndex';
 import { UNASSIGNED_QUERY_FOLDER, sanitizeQueryConnectionFolderName } from './queryStorage';
+import { ensureDPDirs } from '../core/fsWorkspace';
+import { makeStoredPath } from '../core/storageRoot';
 
 type QueryFileConnectionContext = {
     connName: string;
@@ -16,8 +18,12 @@ type QueryFileConnectionContext = {
 };
 
 type QueryFileTarget = {
-    wsFolder: vscode.WorkspaceFolder;
+    /** Absolute path to the connection-scoped queries folder. */
     folderPath: string;
+    /** Absolute path to the RunQL storage root (used to derive relative source_path). */
+    storageRootPath: string;
+    /** RunQL storage root as a URI (file scheme only in v1). */
+    storageRootUri: vscode.Uri;
     connection: QueryFileConnectionContext;
 };
 
@@ -29,21 +35,33 @@ async function resolveQueryFileTarget(
     context: vscode.ExtensionContext,
     connectionId?: string
 ): Promise<QueryFileTarget | undefined> {
-    const wsFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!wsFolder) {
+    let storageRootUri: vscode.Uri;
+    try {
+        storageRootUri = await ensureDPDirs();
+    } catch (e) {
         await ErrorHandler.handle(
             new Error(formatFileSystemError(
                 'Save query',
-                'No workspace folder open',
-                'Open a folder in VS Code first'
+                e instanceof Error ? e.message : String(e),
+                'Configure RunQL storage from the Welcome page or switch to User-level storage.'
             )),
             { severity: ErrorSeverity.Warning, context: 'Save SQL File' }
         );
         return undefined;
     }
 
-    const config = vscode.workspace.getConfiguration('runql');
-    const relFolder = config.get<string>('query.defaultFolder', 'RunQL/queries');
+    if (storageRootUri.scheme !== 'file') {
+        await ErrorHandler.handle(
+            new Error(formatFileSystemError(
+                'Save query',
+                `Unsupported RunQL storage scheme: ${storageRootUri.scheme}`,
+                'RunQL requires a local file-system storage root in this version.'
+            )),
+            { severity: ErrorSeverity.Warning, context: 'Save SQL File' }
+        );
+        return undefined;
+    }
+
     const activeConnId = connectionId ?? context.workspaceState.get<string>("runql.activeConnectionId");
     const connection: QueryFileConnectionContext = {
         connName: "none",
@@ -66,8 +84,9 @@ async function resolveQueryFileTarget(
         : sanitizeQueryConnectionFolderName(connection.connName, connection.connId);
 
     return {
-        wsFolder,
-        folderPath: path.join(wsFolder.uri.fsPath, relFolder, connectionFolder),
+        folderPath: path.join(storageRootUri.fsPath, 'queries', connectionFolder),
+        storageRootPath: storageRootUri.fsPath,
+        storageRootUri,
         connection,
     };
 }
@@ -176,7 +195,9 @@ async function writeQueryBundle(args: {
     const sqlPath = path.join(args.targetDir, `${args.baseName}.sql`);
     const mdPath = path.join(args.targetDir, `${args.baseName}.md`);
     const { sqlHash } = canonicalizeSql(args.sqlContent);
-    const sourcePath = path.relative(args.target.wsFolder.uri.fsPath, sqlPath).replace(/\\/g, '/');
+    const sqlUri = vscode.Uri.file(sqlPath);
+    // source_path stored root-relative so it survives storage-mode changes.
+    const sourcePath = makeStoredPath(sqlUri).replace(/\\/g, '/');
     const mdContent = buildMarkdownContent({
         baseName: args.baseName,
         connection: args.target.connection,
@@ -185,10 +206,32 @@ async function writeQueryBundle(args: {
         sqlHash,
     });
 
-    fs.writeFileSync(sqlPath, args.sqlContent);
+    // Ordering + rollback rules:
+    //   Create path (neither file pre-exists): write .md first, then .sql;
+    //     if .sql fails, unlink the .md we just created so we don't leave
+    //     a doc-less orphan the Saved Queries view would index.
+    //   Overwrite path (.md and/or .sql pre-exist): the user asked to
+    //     replace both, but a partial-write recovery must not destroy
+    //     what was there. Snapshot the pre-existing .md content so a
+    //     .sql-write failure restores the .md rather than unlinking
+    //     the freshly-overwritten (new) content.
+    const mdExistedBefore = fs.existsSync(mdPath);
+    const priorMdBytes = mdExistedBefore ? fs.readFileSync(mdPath) : undefined;
     fs.writeFileSync(mdPath, mdContent);
+    try {
+        fs.writeFileSync(sqlPath, args.sqlContent);
+    } catch (e) {
+        if (mdExistedBefore && priorMdBytes) {
+            // Overwrite path: restore the user's prior .md content.
+            try { fs.writeFileSync(mdPath, priorMdBytes); } catch { /* ignore */ }
+        } else {
+            // Create path: no prior .md, so best-effort unlink the
+            // freshly-created one to avoid a doc-less orphan.
+            try { fs.unlinkSync(mdPath); } catch { /* ignore */ }
+        }
+        throw e;
+    }
 
-    const sqlUri = vscode.Uri.file(sqlPath);
     await queryIndex.updateFile(sqlUri);
     if (args.openAfterWrite !== false) {
         const doc = await vscode.workspace.openTextDocument(sqlUri);

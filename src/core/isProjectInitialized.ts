@@ -1,51 +1,40 @@
 import * as vscode from 'vscode';
+import { tryResolveRunQLRoot } from './storageRoot';
 
 /**
- * Checks if the current workspace is initialized as a RunQL project.
- * A project is considered initialized if the RunQL/ folder exists with required subfolders.
- * This is a read-only check with no side effects.
+ * Checks whether the resolved RunQL storage root exists with the standard
+ * required subdirectories. Read-only, no side effects.
  */
 export async function isProjectInitialized(): Promise<boolean> {
-    const folders = vscode.workspace.workspaceFolders;
-    if (!folders || folders.length === 0) {
-        return false;
-    }
+  const root = tryResolveRunQLRoot();
+  if (!root) return false;
 
-    const root = folders[0].uri;
-    const dpDir = vscode.Uri.joinPath(root, 'RunQL');
+  const dpDir = root.uri;
+  try {
+    const stat = await vscode.workspace.fs.stat(dpDir);
+    if (stat.type !== vscode.FileType.Directory) return false;
+  } catch {
+    return false;
+  }
 
-    // Check if RunQL directory exists
+  const requiredSubs = ['queries', 'schemas', 'system'];
+  for (const sub of requiredSubs) {
     try {
-        const stat = await vscode.workspace.fs.stat(dpDir);
-        if (stat.type !== vscode.FileType.Directory) {
-            return false;
-        }
+      const subUri = vscode.Uri.joinPath(dpDir, sub);
+      const stat = await vscode.workspace.fs.stat(subUri);
+      if (stat.type !== vscode.FileType.Directory) return false;
     } catch {
-        return false;
+      return false;
     }
-
-    // Check minimum required subdirectories
-    const requiredSubs = ['queries', 'schemas', 'system'];
-    for (const sub of requiredSubs) {
-        try {
-            const subUri = vscode.Uri.joinPath(dpDir, sub);
-            const stat = await vscode.workspace.fs.stat(subUri);
-            if (stat.type !== vscode.FileType.Directory) {
-                return false;
-            }
-        } catch {
-            return false;
-        }
-    }
-
-    return true;
+  }
+  return true;
 }
 
 /**
  * Updates the runql.project.initialized context key based on current state.
  */
 export async function updateProjectInitializedContext(): Promise<boolean> {
-    const initialized = await isProjectInitialized();
-    await vscode.commands.executeCommand('setContext', 'runql.project.initialized', initialized);
-    return initialized;
+  const initialized = await isProjectInitialized();
+  await vscode.commands.executeCommand('setContext', 'runql.project.initialized', initialized);
+  return initialized;
 }

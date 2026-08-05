@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { ConnectionProfile, ConnectionSecrets } from "../core/types";
 import { ensureDPDirs, fileExists, readJson, writeJson } from "../core/fsWorkspace";
+import { tryResolveRunQLRoot } from "../core/storageRoot";
 import { Logger } from '../core/logger';
 import { normalizeConnectionType } from './connectionType';
 import { isReservedConnectionFolderName, normalizedConnectionFolderKey } from '../schema/schemaPaths';
@@ -18,16 +19,19 @@ interface ConnectionsFile {
 }
 
 async function getConnectionsUri(createIfMissing = false): Promise<vscode.Uri | undefined> {
-  const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-  if (!root) return undefined;
-
   if (createIfMissing) {
-    const dpDir = await ensureDPDirs();
-    return vscode.Uri.joinPath(dpDir, "system", "connections.json");
+    try {
+      const dpDir = await ensureDPDirs();
+      return vscode.Uri.joinPath(dpDir, "system", "connections.json");
+    } catch (e) {
+      Logger.warn("Cannot ensure RunQL storage root for connections.json", e);
+      return undefined;
+    }
   }
-
   // Read-only path resolution must not create folders.
-  return vscode.Uri.joinPath(root, "RunQL", "system", "connections.json");
+  const root = tryResolveRunQLRoot();
+  if (!root) return undefined;
+  return vscode.Uri.joinPath(root.uri, "system", "connections.json");
 }
 
 export async function loadConnectionProfiles(): Promise<ConnectionProfile[]> {
@@ -68,12 +72,21 @@ export async function loadConnectionProfiles(): Promise<ConnectionProfile[]> {
   return connections;
 }
 
+/**
+ * Save (create or update) a connection profile with optimistic concurrency
+ * against `system/connections.json`:
+ *
+ *   1. Reload the latest file from disk (may reflect another window's edits).
+ *   2. Merge by profile id — records only present on disk are preserved.
+ *   3. If the disk record for the same id was modified after our baseline
+ *      `updatedAt`, prompt Keep Current Window / Keep Disk / Cancel.
+ *   4. Bump `updatedAt` on our record and write the merged file.
+ */
 export async function saveConnectionProfile(profile: ConnectionProfile): Promise<void> {
   const uri = await getConnectionsUri(true);
   if (!uri) {
     throw new Error("No workspace folder open.");
   }
-  let connections = await loadConnectionProfiles();
   profile.connectionType = normalizeConnectionType(profile.connectionType);
 
   const nameError = await validateConnectionName(profile.name, profile.id);
@@ -81,30 +94,76 @@ export async function saveConnectionProfile(profile: ConnectionProfile): Promise
     throw new Error(nameError);
   }
 
-  const idx = connections.findIndex(c => c.id === profile.id);
-  if (idx >= 0) {
-    // Check for name change
-    const existing = connections[idx];
-    if (existing.name !== profile.name) {
-      // Renamed!
-      try {
-        const { renameSchemaFiles } = require('../schema/schemaStore');
-        const { renameQueryConnectionFolder } = require('../queryLibrary/queryStorage');
-        await renameSchemaFiles(profile.id, existing.name, profile.name);
-        await renameQueryConnectionFolder(profile.id, existing.name, profile.name);
-      } catch (e) {
-        Logger.error("Failed to rename connection-scoped files:", e);
+  const baselineUpdatedAt = profile.updatedAt;
+  const diskConnections = await loadConnectionProfiles();
+  const diskIdx = diskConnections.findIndex((c) => c.id === profile.id);
+  const diskProfile = diskIdx >= 0 ? diskConnections[diskIdx] : undefined;
+
+  // Always work with a fresh object so we never mutate the caller's
+  // profile in place. Mutating it would advance the caller's
+  // `updatedAt` and break the baseline they'd hand back for a
+  // subsequent save.
+  let resolvedProfile: ConnectionProfile = { ...profile };
+
+  if (diskProfile) {
+    // Concurrent-edit detection uses `updatedAt` timestamps. When
+    // either side is missing a parseable timestamp — pre-1.16 profiles
+    // never had one — we can't tell whether disk moved on since our
+    // load. Treat the missing baseline as "unknown" and still prompt
+    // rather than silently overwriting.
+    const diskTs = Date.parse(diskProfile.updatedAt ?? '');
+    const baseTs = Date.parse(baselineUpdatedAt ?? '');
+    const conflictKnown =
+      Number.isFinite(diskTs) && Number.isFinite(baseTs) && diskTs > baseTs;
+    const conflictUnknown =
+      !Number.isFinite(baseTs) || !Number.isFinite(diskTs);
+    if (conflictKnown || conflictUnknown) {
+      const detail = conflictKnown
+        ? `Connection "${profile.name}" was modified in another VS Code window since you started editing.`
+        : `Connection "${profile.name}" has no reliable last-modified timestamp on one side, so RunQL can't be sure whether the disk copy has moved on. Choose which version to keep.`;
+      const choice = await vscode.window.showWarningMessage(
+        detail,
+        { modal: true },
+        'Keep Current Window Version',
+        'Keep Disk Version',
+        'Cancel'
+      );
+      if (!choice || choice === 'Cancel') {
+        throw new Error('Save cancelled: connection was modified in another window.');
       }
+      if (choice === 'Keep Disk Version') {
+        return;
+      }
+      // Keep Current Window Version → fall through and overwrite.
     }
-    connections[idx] = profile;
+  }
+
+  // Rename side-effects use whatever name the disk record currently has.
+  const priorForRename = diskProfile;
+  if (priorForRename && priorForRename.name !== resolvedProfile.name) {
+    try {
+      const { renameSchemaFiles } = require('../schema/schemaStore');
+      const { renameQueryConnectionFolder } = require('../queryLibrary/queryStorage');
+      await renameSchemaFiles(resolvedProfile.id, priorForRename.name, resolvedProfile.name);
+      await renameQueryConnectionFolder(resolvedProfile.id, priorForRename.name, resolvedProfile.name);
+    } catch (e) {
+      Logger.error("Failed to rename connection-scoped files:", e);
+    }
+  }
+
+  resolvedProfile.updatedAt = new Date().toISOString();
+
+  const merged = [...diskConnections];
+  if (diskIdx >= 0) {
+    merged[diskIdx] = resolvedProfile;
   } else {
-    connections.push(profile);
+    merged.push(resolvedProfile);
   }
 
   const file: ConnectionsFile = {
     version: "0.1",
     generatedAt: new Date().toISOString(),
-    connections
+    connections: merged,
   };
   await writeJson(uri, file);
 }
@@ -114,8 +173,13 @@ export async function deleteConnection(id: string): Promise<void> {
   if (!uri) {
     throw new Error("No workspace folder open.");
   }
-  let connections = await loadConnectionProfiles();
-  const existing = connections.find(c => c.id === id);
+  // Reload the latest disk state immediately before doing anything so
+  // side-effects (schema folder rename, query folder archive) use the
+  // current connection name — a concurrent rename in another window
+  // between our earlier load and this delete would otherwise leave
+  // orphaned folders under the pre-rename name.
+  const latest = await loadConnectionProfiles();
+  const existing = latest.find(c => c.id === id);
   if (existing) {
     try {
       const { archiveSchemaFilesForDeletedConnection } = require('../schema/schemaStore');
@@ -126,12 +190,12 @@ export async function deleteConnection(id: string): Promise<void> {
       Logger.error("Failed to archive connection-scoped files:", e);
     }
   }
-  connections = connections.filter(c => c.id !== id);
+  const filtered = latest.filter(c => c.id !== id);
 
   const file: ConnectionsFile = {
     version: "0.1",
     generatedAt: new Date().toISOString(),
-    connections
+    connections: filtered,
   };
   await writeJson(uri, file);
 
