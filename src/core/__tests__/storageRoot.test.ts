@@ -22,6 +22,14 @@ interface ConfigState {
   workspaceFolder: string;
 }
 
+// `path.resolve` and `path.join` emit native separators — backslashes on
+// Windows, forward slashes elsewhere. These tests care about semantic
+// path equality, not the separator character. Normalize both sides
+// before comparing so a single assertion works on both platforms.
+function toPosix(p: string): string {
+  return p.replace(/\\/g, '/');
+}
+
 function setStorageConfig(state: Partial<ConfigState>): void {
   const full: ConfigState = {
     location: state.location ?? 'workspace',
@@ -140,7 +148,7 @@ describe('storageRoot', () => {
       setStorageConfig({ location: 'user', userPath: '~/.runql' });
       const root = resolveRunQLRoot();
       expect(root.location).toBe('user');
-      expect(root.uri.path).toBe(`${os.homedir()}/.runql`);
+      expect(toPosix(root.uri.path)).toBe(toPosix(`${os.homedir()}/.runql`));
       expect(root.isWorkspaceScoped).toBe(false);
     });
 
@@ -148,7 +156,7 @@ describe('storageRoot', () => {
       process.env.CODESPACES = 'true';
       setStorageConfig({ location: 'user' });
       const root = resolveRunQLRoot();
-      expect(root.uri.path).toBe('/workspaces/.runql');
+      expect(toPosix(root.uri.path)).toBe('/workspaces/.runql');
       expect(root.isCodespaces).toBe(true);
     });
   });
@@ -195,20 +203,20 @@ describe('storageRoot', () => {
     it('accepts a safe absolute path', () => {
       const r = validateCustomPath('/opt/runql-data');
       expect(r.error).toBeUndefined();
-      expect(r.fsPath).toBe('/opt/runql-data');
+      expect(toPosix(r.fsPath!)).toBe('/opt/runql-data');
     });
 
     it('accepts an expanded tilde path', () => {
       const r = validateCustomPath('~/runql-data');
       expect(r.error).toBeUndefined();
-      expect(r.fsPath).toBe(`${os.homedir()}/runql-data`);
+      expect(toPosix(r.fsPath!)).toBe(toPosix(`${os.homedir()}/runql-data`));
     });
 
     it('resolveRunQLRoot returns the custom URI when valid', () => {
       setStorageConfig({ location: 'custom', customPath: '/opt/runql' });
       const root = resolveRunQLRoot();
       expect(root.location).toBe('custom');
-      expect(root.uri.path).toBe('/opt/runql');
+      expect(toPosix(root.uri.path)).toBe('/opt/runql');
     });
   });
 
@@ -300,12 +308,12 @@ describe('storageRoot', () => {
 
     it('resolves legitimate root-relative paths', () => {
       const uri = resolveStoredPath('queries/Prod/foo.sql');
-      expect(uri?.path).toBe('/user-runql/queries/Prod/foo.sql');
+      expect(toPosix(uri!.path)).toBe('/user-runql/queries/Prod/foo.sql');
     });
 
     it('resolves legitimate legacy `RunQL/…` paths', () => {
       const uri = resolveStoredPath('RunQL/queries/Prod/foo.sql');
-      expect(uri?.path).toBe('/user-runql/queries/Prod/foo.sql');
+      expect(toPosix(uri!.path)).toBe('/user-runql/queries/Prod/foo.sql');
     });
 
     it('refuses paths containing `..` segments', () => {
