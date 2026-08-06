@@ -1,13 +1,7 @@
-export type ChangelogSection = {
-    title: string;
-    paragraphs: string[];
-    items: string[];
-};
-
 export type ChangelogEntry = {
     version: string;
     date?: string;
-    sections: ChangelogSection[];
+    markdown: string;
 };
 
 type VersionBlock = {
@@ -17,8 +11,6 @@ type VersionBlock = {
 };
 
 const VERSION_HEADING_PATTERN = /^##\s+\[([^\]]+)\](?:\s*-\s*(.+))?\s*$/gm;
-const SECTION_HEADING_PATTERN = /^###\s+(.+)$/;
-const LIST_ITEM_PATTERN = /^(?:[-*]|\d+\.)\s+(.+)$/;
 
 export function parseChangelogEntry(markdown: string, version?: string): ChangelogEntry | undefined {
     const blocks = getVersionBlocks(markdown);
@@ -33,7 +25,7 @@ export function parseChangelogEntry(markdown: string, version?: string): Changel
     return {
         version: targetBlock.version,
         date: targetBlock.date,
-        sections: parseSections(targetBlock.body)
+        markdown: targetBlock.body
     };
 }
 
@@ -51,41 +43,4 @@ function getVersionBlocks(markdown: string): VersionBlock[] {
             body: markdown.slice((match.index ?? 0) + match[0].length, end).trim()
         };
     });
-}
-
-function parseSections(body: string): ChangelogSection[] {
-    const sections: ChangelogSection[] = [];
-    let current: ChangelogSection | undefined;
-
-    const ensureSection = () => {
-        if (!current) {
-            current = { title: 'Changes', paragraphs: [], items: [] };
-            sections.push(current);
-        }
-        return current;
-    };
-
-    for (const rawLine of body.split(/\r?\n/)) {
-        const line = rawLine.trim();
-        if (!line) {
-            continue;
-        }
-
-        const heading = SECTION_HEADING_PATTERN.exec(line);
-        if (heading) {
-            current = { title: heading[1].trim(), paragraphs: [], items: [] };
-            sections.push(current);
-            continue;
-        }
-
-        const listItem = LIST_ITEM_PATTERN.exec(line);
-        if (listItem) {
-            ensureSection().items.push(listItem[1].trim());
-            continue;
-        }
-
-        ensureSection().paragraphs.push(line);
-    }
-
-    return sections.filter(section => section.paragraphs.length > 0 || section.items.length > 0);
 }

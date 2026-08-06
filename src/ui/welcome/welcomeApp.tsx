@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
+import ReactMarkdown from 'react-markdown';
 
 // Type extension for VS Code webview API
 declare const acquireVsCodeApi: () => {
@@ -20,16 +21,10 @@ type InitStructureEntry = {
 type StructureIconKind = 'folder' | 'file';
 type WelcomeMode = 'welcome' | 'whatsNew';
 
-type ChangelogSection = {
-    title: string;
-    paragraphs: string[];
-    items: string[];
-};
-
 type ChangelogEntry = {
     version: string;
     date?: string;
-    sections: ChangelogSection[];
+    markdown: string;
 };
 
 type AISettingDoc = {
@@ -420,6 +415,39 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: '13px',
         fontWeight: 700
     },
+    changelogSubheading: {
+        marginTop: '12px',
+        marginBottom: '8px',
+        fontSize: '13px',
+        fontWeight: 700,
+        lineHeight: 1.4
+    },
+    changelogParagraph: {
+        marginTop: '8px',
+        marginBottom: '8px',
+        fontSize: '13px',
+        lineHeight: 1.45,
+        color: 'var(--vscode-descriptionForeground)'
+    },
+    changelogList: {
+        marginTop: '8px',
+        marginBottom: '8px',
+        paddingLeft: '26px',
+        fontSize: '13px',
+        lineHeight: 1.45,
+        color: 'var(--vscode-descriptionForeground)'
+    },
+    changelogListItem: {
+        marginBottom: '4px'
+    },
+    changelogInlineCode: {
+        fontFamily: 'var(--vscode-editor-font-family)',
+        fontSize: '12px',
+        backgroundColor: 'var(--vscode-textCodeBlock-background)',
+        padding: '1px 4px',
+        borderRadius: '3px',
+        color: 'var(--vscode-foreground)'
+    },
     settingsGrid: {
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
@@ -605,16 +633,6 @@ function CollapsibleSection({
     );
 }
 
-function renderInlineMarkdown(text: string): React.ReactNode {
-    const parts = text.split(/(`[^`]+`)/g);
-    return parts.map((part, index) => {
-        if (part.startsWith('`') && part.endsWith('`')) {
-            return <code key={index}>{part.slice(1, -1)}</code>;
-        }
-        return <React.Fragment key={index}>{part}</React.Fragment>;
-    });
-}
-
 function renderWhatsNewEntry(entry: ChangelogEntry | null, version: string) {
     if (!entry) {
         return (
@@ -633,23 +651,19 @@ function renderWhatsNewEntry(entry: ChangelogEntry | null, version: string) {
             <p style={styles.changelogMeta}>
                 Version {entry.version}{entry.date ? ` - ${entry.date}` : ''}
             </p>
-            {entry.sections.map(section => (
-                <div key={section.title}>
-                    <h3 style={styles.changelogSectionTitle}>{section.title}</h3>
-                    {section.paragraphs.map((paragraph, index) => (
-                        <p key={index} style={styles.statusNote}>
-                            {renderInlineMarkdown(paragraph)}
-                        </p>
-                    ))}
-                    {section.items.length > 0 && (
-                        <ul style={styles.bulletList}>
-                            {section.items.map((item, index) => (
-                                <li key={index}>{renderInlineMarkdown(item)}</li>
-                            ))}
-                        </ul>
-                    )}
-                </div>
-            ))}
+            <ReactMarkdown
+                components={{
+                    h3: ({ node: _node, ...props }) => <h3 style={styles.changelogSectionTitle} {...props} />,
+                    h4: ({ node: _node, ...props }) => <h4 style={styles.changelogSubheading} {...props} />,
+                    p: ({ node: _node, ...props }) => <p style={styles.changelogParagraph} {...props} />,
+                    ol: ({ node: _node, ...props }) => <ol style={styles.changelogList} {...props} />,
+                    ul: ({ node: _node, ...props }) => <ul style={styles.changelogList} {...props} />,
+                    li: ({ node: _node, ...props }) => <li style={styles.changelogListItem} {...props} />,
+                    code: ({ node: _node, ...props }) => <code style={styles.changelogInlineCode} {...props} />
+                }}
+            >
+                {entry.markdown}
+            </ReactMarkdown>
         </div>
     );
 }

@@ -27,7 +27,7 @@
     "erd",
     "ai"
   ],
-  "version": "1.16.1",
+  "version": "1.16.2",
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -972,6 +972,7 @@
     "react": "^19.2.3",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.2.3",
+    "react-markdown": "^10.1.0",
     "reactflow": "^11.11.4",
     "sql-formatter": "^15.7.0",
     "ts-jest": "^29.4.6",
