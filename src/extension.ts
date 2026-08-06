@@ -119,6 +119,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
   const isRunQLIDEHost = vscode.env.uriScheme === "runql-ide";
   let focusedRunQLActivityBarThisActivation = false;
 
+  const focusRunQLActivityBar = async () => {
+    try {
+      await vscode.commands.executeCommand("workbench.view.extension.runql");
+      focusedRunQLActivityBarThisActivation = true;
+      if (!isRunQLIDEHost && !firstRunFocusMarkerAtStart) {
+        await context.globalState.update(firstRunFocusMarkerKey, true);
+      }
+    } catch (err) {
+      Logger.error("Failed to focus RunQL activity bar", err);
+    }
+  };
+
   // Migrate legacy AI settings to the simplified source/provider model
   const { migrateAiProviderSetting, normalizeAiSettings, initializeAiSettingsSyncSnapshot } = await import('./ai/aiService');
   await migrateAiProviderSetting();
@@ -1439,6 +1451,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
         await updateProjectInitializedContext();
         explorerProvider.refresh();
 
+        await focusRunQLActivityBar();
         vscode.window.showInformationMessage('RunQL project initialized successfully!');
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -1755,8 +1768,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       if (autoWhatsNewShownThisSession) return;
       if (await isProjectInitialized()) return;
 
-      await vscode.commands.executeCommand("workbench.view.extension.runql");
-      focusedRunQLActivityBarThisActivation = true;
       await vscode.commands.executeCommand("runql.welcome.open");
       autoWelcomeShownThisSession = true;
     } catch (err) {
@@ -1769,8 +1780,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       if (autoWhatsNewShownThisSession) return;
       if (!previousExtensionVersion || !extensionVersion || previousExtensionVersion === extensionVersion) return;
 
-      await vscode.commands.executeCommand("workbench.view.extension.runql");
-      focusedRunQLActivityBarThisActivation = true;
       await vscode.commands.executeCommand("runql.whatsNew.open");
       autoWhatsNewShownThisSession = true;
     } catch (err) {
@@ -1778,18 +1787,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     }
   };
 
-  const focusRunQLActivityBar = async () => {
-    try {
-      await vscode.commands.executeCommand("workbench.view.extension.runql");
-      focusedRunQLActivityBarThisActivation = true;
-    } catch (err) {
-      Logger.error("Failed to focus RunQL activity bar", err);
-    }
-  };
-
   if (isRunQLIDEHost) {
     await focusRunQLActivityBar();
-  } else if (!firstRunFocusMarkerAtStart && !previousExtensionVersion) {
+  } else if (!firstRunFocusMarkerAtStart && !previousExtensionVersion && projectInitializedAtStartup) {
     await focusRunQLActivityBar();
   }
   await maybeAutoOpenWhatsNew();

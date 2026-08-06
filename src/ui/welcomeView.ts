@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { isProjectInitialized, updateProjectInitializedContext } from '../core/isProjectInitialized';
+import { isProjectInitialized } from '../core/isProjectInitialized';
 import { fileExists } from '../core/fsWorkspace';
 import { ChangelogEntry, parseChangelogEntry } from './changelog';
 import {
@@ -18,7 +18,6 @@ import {
     suppressAutoMigration,
     markProgrammaticStorageChange,
 } from '../core/storageMigration';
-import { promptWorkspaceLinkInit, promptWorkspaceOwnerFolder } from '../core/workspaceLinkInit';
 
 type WelcomeMode = 'welcome' | 'whatsNew';
 
@@ -277,49 +276,7 @@ export class WelcomeView {
 
                     case 'initialize':
                         try {
-                            const location = vscode.workspace
-                                .getConfiguration('runql.storage')
-                                .get<StorageLocation>('location', 'workspace');
-                            if (location === 'workspace') {
-                                await promptWorkspaceOwnerFolder();
-                                if ((vscode.workspace.workspaceFolders?.length ?? 0) === 0) {
-                                    vscode.window.showWarningMessage(
-                                        'Workspace storage requires an open folder. Open a folder or switch RunQL storage to User-level.'
-                                    );
-                                    return;
-                                }
-                            }
-
-                            const root = tryResolveRunQLRoot();
-                            if (!root) {
-                                vscode.window.showWarningMessage(
-                                    'RunQL storage cannot be resolved. Configure a storage location and try again.'
-                                );
-                                return;
-                            }
-
-                            // Full initialization - must match runql.project.initialize command flow
-                            const { ensureDPDirs, ensureAgentsMd, ensureReadmeMd } = require('../core/fsWorkspace');
-                            const { initializePromptFiles } = require('../ai/prompts');
-                            const { queryIndex } = require('../queryLibrary/queryIndex');
-                            const { HistoryService } = require('../services/historyService');
-
-                            await ensureDPDirs();
-                            await queryIndex.initialize();
-                            await initializePromptFiles();
-
-                            if (root.location === 'workspace') {
-                                await ensureAgentsMd();
-                                await ensureReadmeMd();
-                            } else {
-                                await promptWorkspaceLinkInit(root);
-                            }
-
-                            await HistoryService.getInstance().initialize();
-
-                            await updateProjectInitializedContext();
-                            await vscode.commands.executeCommand('runql.view.refreshConnections');
-                            vscode.window.showInformationMessage('RunQL project initialized successfully!');
+                            await vscode.commands.executeCommand('runql.project.initialize');
                             await this._sendStatus();
                         } catch (e: unknown) {
                             vscode.window.showErrorMessage(`Initialization failed: ${e instanceof Error ? e.message : String(e)}`);

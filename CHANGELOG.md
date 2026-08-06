@@ -271,4 +271,8 @@ RunQL now lets you choose where your RunQL files are stored.  You have three opt
     - Codespaces: /workspaces/.runql
 3. Custom path = explicit folder you control
 
-Changes to the Welcome and What's New pages.
+#### Welcome/What's New page and Activity Bar focus.
+- Changes to the Welcome and What's New pages.
+- Opening What's New after a version update no longer switches the Activity Bar to RunQL.
+- Auto-opening Welcome for uninitialized projects no longer switches the Activity Bar to RunQL.
+- Initializing a RunQL project now switches the Activity Bar to RunQL after the user action succeeds.
