@@ -167,12 +167,19 @@ describe('connections.json optimistic concurrency', () => {
     });
     seedConnectionsFile([laterFromB]);
 
-    // User picks "Cancel" on the conflict prompt.
-    (vscode.window.showWarningMessage as jest.Mock).mockResolvedValueOnce('Cancel');
+    // User picks "Cancel" on the conflict prompt. Modal dialogs
+    // auto-add a Cancel button that resolves to undefined; we no
+    // longer list an explicit 'Cancel' action (that showed twice).
+    (vscode.window.showWarningMessage as jest.Mock).mockResolvedValueOnce(undefined);
     await expect(
       saveConnectionProfile({ ...inMemory, host: 'a.example.com' })
     ).rejects.toThrow(/cancel/i);
-    expect(vscode.window.showWarningMessage as jest.Mock).toHaveBeenCalled();
+    const warnMock = vscode.window.showWarningMessage as jest.Mock;
+    expect(warnMock).toHaveBeenCalled();
+    // Regression guard: the action list must NOT contain a literal
+    // 'Cancel' — the modal already provides one.
+    const actionArgs = warnMock.mock.calls[0].slice(2);
+    expect(actionArgs).not.toContain('Cancel');
 
     // Disk kept window B's version untouched.
     expect(loadConnectionsFile()[0].host).toBe('other.example.com');
@@ -219,7 +226,7 @@ describe('connections.json optimistic concurrency', () => {
     const inMemory = { ...makeProfile({ id: 'p-1', name: 'Prod' }) };
     delete (inMemory as Partial<ConnectionProfile>).updatedAt;
 
-    (vscode.window.showWarningMessage as jest.Mock).mockResolvedValueOnce('Cancel');
+    (vscode.window.showWarningMessage as jest.Mock).mockResolvedValueOnce(undefined);
     await expect(
       saveConnectionProfile({ ...inMemory, host: 'ours.example.com' })
     ).rejects.toThrow(/cancel/i);
@@ -266,11 +273,13 @@ describe('connections.json optimistic concurrency', () => {
     ).toBe(true);
   });
 
-  it("save does not mutate the caller's profile object (R8 regression)", async () => {
-    // R8: previously `resolvedProfile = profile` aliased the caller's
-    // object, and setting `updatedAt` on the alias advanced the
-    // caller's baseline in place. Verify the caller's `updatedAt` is
-    // unchanged after the save.
+  it("advances the caller's baseline `updatedAt` after a successful save", async () => {
+    // If the caller keeps saving from the same in-memory reference
+    // (e.g. the SecureQL adapter's fire-and-forget `persistProfile`
+    // after `refreshSecureQLApprovalPolicyForRun` already saved),
+    // the caller's `updatedAt` must match what we just wrote to
+    // disk. Otherwise our own last write looks like a foreign edit
+    // to the next save and triggers a spurious conflict prompt.
     const original = makeProfile({
       id: 'p-1',
       name: 'Prod',
@@ -280,11 +289,22 @@ describe('connections.json optimistic concurrency', () => {
     const [inMemory] = await loadConnectionProfiles();
     const before = inMemory.updatedAt;
 
-    await saveConnectionProfile({ ...inMemory, host: 'new.example.com' });
+    const edited = { ...inMemory, host: 'new.example.com' };
+    await saveConnectionProfile(edited);
 
-    // The record we handed in should keep its original baseline
-    // timestamp — mutation would break the next save's conflict
-    // detection by advancing our own baseline.
-    expect(inMemory.updatedAt).toBe(before);
+    // Save advanced the caller's baseline to the freshly written
+    // timestamp — strictly newer than before, and matching what's
+    // now on disk.
+    expect(edited.updatedAt).not.toBe(before);
+    expect(Date.parse(edited.updatedAt!) > Date.parse(before!)).toBe(true);
+    const disk = loadConnectionsFile();
+    expect(disk[0].updatedAt).toBe(edited.updatedAt);
+
+    // A second save from the same in-memory profile must NOT
+    // trigger a conflict prompt, since disk was only bumped by us.
+    (vscode.window.showWarningMessage as jest.Mock).mockClear();
+    await saveConnectionProfile({ ...edited, host: 'newer.example.com' });
+    expect(vscode.window.showWarningMessage as jest.Mock).not.toHaveBeenCalled();
+    expect(loadConnectionsFile()[0].host).toBe('newer.example.com');
   });
 });

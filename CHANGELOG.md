@@ -276,3 +276,31 @@ RunQL now lets you choose where your RunQL files are stored.  You have three opt
 - Opening What's New after a version update no longer switches the Activity Bar to RunQL.
 - Auto-opening Welcome for uninitialized projects no longer switches the Activity Bar to RunQL.
 - Initializing a RunQL project now switches the Activity Bar to RunQL after the user action succeeds.
+
+## [1.17]
+
+### Changes
+
+#### More Table Actions in RunQL Explorer
+
+Right-click any table in RunQL Explorer to:
+
+- Copy the table name
+- Edit the table
+- View table DDL
+- Generate SELECT, INSERT, UPDATE, and DELETE templates
+- Dump table structure
+- Generate mock data
+- Copy, drop, or truncate a table
+
+RunQL generates SQL for your database:
+
+- PostgreSQL
+- MySQL and MariaDB
+- DuckDB
+- Snowflake
+- Databricks
+- BigQuery
+- MS SQL
+
+Export permissions on SecureQL connections continue to be enforced if you have them set for your organization.

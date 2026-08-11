@@ -28,13 +28,15 @@ export function resolveEffectiveSqlDialect(profile: ConnectionProfile): DbDialec
 export function quoteIdentifier(dialect: DbDialect, identifier: string): string {
     switch (dialect) {
         case 'mysql':
-            // MySQL uses backticks by default
+        case 'bigquery':
+        case 'databricks':
+            // MySQL/MariaDB, BigQuery, and Databricks (Spark SQL) use backticks
             return `\`${identifier.replace(/`/g, '``')}\``;
         case 'mssql':
             // MS SQL uses square brackets
             return `[${identifier.replace(/]/g, ']]')}]`;
         default:
-            // postgres, duckdb, snowflake, oracle, databricks, sqlite use double quotes (ANSI SQL)
+            // postgres, duckdb, snowflake, oracle, sqlite use double quotes (ANSI SQL)
             return `"${identifier.replace(/"/g, '""')}"`;
     }
 }

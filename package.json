@@ -27,7 +27,7 @@
     "erd",
     "ai"
   ],
-  "version": "1.16.2",
+  "version": "1.17.0",
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -106,7 +106,9 @@
       },
       {
         "command": "runql.connection.add",
-        "title": "RunQL: Add DB Connection",
+        "title": "Add DB Connection",
+        "category": "RunQL",
+        "shortTitle": "Add DB Connection",
         "icon": {
           "dark": "media/icons/lucide/dark/clipboard-plus.svg",
           "light": "media/icons/lucide/light/clipboard-plus.svg"
@@ -114,7 +116,9 @@
       },
       {
         "command": "runql.connection.edit",
-        "title": "RunQL: Edit Connection",
+        "title": "Edit Connection",
+        "category": "RunQL",
+        "shortTitle": "Edit Connection",
         "icon": {
           "dark": "media/icons/lucide/dark/clipboard-pen-line.svg",
           "light": "media/icons/lucide/light/clipboard-pen-line.svg"
@@ -122,7 +126,9 @@
       },
       {
         "command": "runql.connection.remove",
-        "title": "RunQL: Remove Connection",
+        "title": "Remove Connection",
+        "category": "RunQL",
+        "shortTitle": "Remove Connection",
         "icon": {
           "dark": "media/icons/lucide/dark/clipboard-x.svg",
           "light": "media/icons/lucide/light/clipboard-x.svg"
@@ -130,7 +136,9 @@
       },
       {
         "command": "runql.connection.test",
-        "title": "RunQL: Test Connection",
+        "title": "Test Connection",
+        "category": "RunQL",
+        "shortTitle": "Test Connection",
         "icon": {
           "dark": "media/icons/lucide/dark/clipboard-check.svg",
           "light": "media/icons/lucide/light/clipboard-check.svg"
@@ -138,12 +146,16 @@
       },
       {
         "command": "runql.connection.select",
-        "title": "RunQL: Set as default for new SQL files",
+        "title": "Set as default for new SQL files",
+        "category": "RunQL",
+        "shortTitle": "Set as default for new SQL files",
         "icon": "$(pass)"
       },
       {
         "command": "runql.connection.introspect",
-        "title": "RunQL: Refresh Schema (Introspect)",
+        "title": "Refresh Schema (Introspect)",
+        "category": "RunQL",
+        "shortTitle": "Refresh Schema",
         "icon": {
           "dark": "media/icons/lucide/dark/rotate-ccw.svg",
           "light": "media/icons/lucide/light/rotate-ccw.svg"
@@ -159,7 +171,9 @@
       },
       {
         "command": "runql.view.refreshSchemas",
-        "title": "RunQL: Refresh All Schemas",
+        "title": "Refresh All Schemas",
+        "category": "RunQL",
+        "shortTitle": "Refresh All Schemas",
         "icon": {
           "dark": "media/icons/lucide/dark/rotate-ccw.svg",
           "light": "media/icons/lucide/light/rotate-ccw.svg"
@@ -212,7 +226,9 @@
       },
       {
         "command": "runql.query.openTablePreview",
-        "title": "RunQL: Query Top 100",
+        "title": "Query Top 100",
+        "category": "RunQL",
+        "shortTitle": "Query Top 100",
         "icon": {
           "dark": "media/icons/lucide/dark/play.svg",
           "light": "media/icons/lucide/light/play.svg"
@@ -220,7 +236,9 @@
       },
       {
         "command": "runql.schema.createTable",
-        "title": "RunQL: Create Table in Schema",
+        "title": "Create Table in Schema",
+        "category": "RunQL",
+        "shortTitle": "Create Table",
         "icon": {
           "dark": "media/icons/lucide/dark/square-plus.svg",
           "light": "media/icons/lucide/light/square-plus.svg"
@@ -228,15 +246,91 @@
       },
       {
         "command": "runql.schema.editTable",
-        "title": "RunQL: Edit Table",
+        "title": "Edit Table",
+        "category": "RunQL",
+        "shortTitle": "Edit Table",
         "icon": {
           "dark": "media/icons/lucide/dark/square-pen.svg",
           "light": "media/icons/lucide/light/square-pen.svg"
         }
       },
       {
+        "command": "runql.schema.copyTableName",
+        "title": "Copy Name",
+        "category": "RunQL",
+        "shortTitle": "Copy Name"
+      },
+      {
+        "command": "runql.schema.showTableDdl",
+        "title": "Show Table DDL",
+        "category": "RunQL",
+        "shortTitle": "Show Table DDL"
+      },
+      {
+        "command": "runql.schema.sqlTemplate.select",
+        "title": "SELECT",
+        "category": "RunQL",
+        "shortTitle": "SELECT"
+      },
+      {
+        "command": "runql.schema.sqlTemplate.insert",
+        "title": "INSERT",
+        "category": "RunQL",
+        "shortTitle": "INSERT"
+      },
+      {
+        "command": "runql.schema.sqlTemplate.update",
+        "title": "UPDATE",
+        "category": "RunQL",
+        "shortTitle": "UPDATE"
+      },
+      {
+        "command": "runql.schema.sqlTemplate.delete",
+        "title": "DELETE",
+        "category": "RunQL",
+        "shortTitle": "DELETE"
+      },
+      {
+        "command": "runql.schema.dumpStructure",
+        "title": "Dump Structure",
+        "category": "RunQL",
+        "shortTitle": "Dump Structure"
+      },
+      {
+        "command": "runql.schema.dumpStructureAndData",
+        "title": "Dump Structure And Data",
+        "category": "RunQL",
+        "shortTitle": "Dump Structure And Data"
+      },
+      {
+        "command": "runql.schema.generateMockData",
+        "title": "Generate Mock Data",
+        "category": "RunQL",
+        "shortTitle": "Generate Mock Data"
+      },
+      {
+        "command": "runql.schema.dropTable",
+        "title": "Drop",
+        "category": "RunQL",
+        "shortTitle": "Drop"
+      },
+      {
+        "command": "runql.schema.copyTable",
+        "title": "Copy Table",
+        "category": "RunQL",
+        "shortTitle": "Copy Table"
+      },
+      {
+        "command": "runql.schema.truncateTable",
+        "title": "Truncate Table",
+        "category": "RunQL",
+        "shortTitle": "Truncate Table"
+      },
+      {
         "command": "runql.schema.backupSchema",
-        "title": "RunQL: Backup Schema",
+        "title": "Backup Schema",
+        "category": "RunQL",
+        "shortTitle": "Backup Schema",
         "icon": {
           "dark": "media/icons/lucide/dark/database-backup.svg",
           "light": "media/icons/lucide/light/database-backup.svg"
@@ -260,7 +354,9 @@
       },
       {
         "command": "runql.schema.generateDescriptionsWithAI",
-        "title": "RunQL: Generate Descriptions",
+        "title": "Generate Descriptions",
+        "category": "RunQL",
+        "shortTitle": "Generate Descriptions",
         "icon": {
           "dark": "media/icons/lucide/dark/book-text.svg",
           "light": "media/icons/lucide/light/book-text.svg"
@@ -268,7 +364,9 @@
       },
       {
         "command": "runql.openSettings",
-        "title": "RunQL: Settings",
+        "title": "Settings",
+        "category": "RunQL",
+        "shortTitle": "Settings",
         "icon": "$(gear)"
       },
       {
@@ -277,7 +375,9 @@
       },
       {
         "command": "runql.ai.selectModel",
-        "title": "RunQL: Select AI Model",
+        "title": "Select AI Model",
+        "category": "RunQL",
+        "shortTitle": "Select AI Model",
         "icon": "$(hubot)"
       },
       {
@@ -309,7 +409,9 @@
       },
       {
         "command": "runql.erd.openSchema",
-        "title": "RunQL: View ERD (Selected Schema)",
+        "title": "View ERD (Selected Schema)",
+        "category": "RunQL",
+        "shortTitle": "View ERD",
         "icon": "$(type-hierarchy)"
       },
       {
@@ -326,11 +428,15 @@
       },
       {
         "command": "runql.editor.insertRoutineCall",
-        "title": "RunQL: Insert Routine Call"
+        "title": "Insert Routine Call",
+        "category": "RunQL",
+        "shortTitle": "Insert Routine Call"
       },
       {
         "command": "runql.connection.exportToCsv",
-        "title": "RunQL: Export to CSV (Generic)",
+        "title": "Export to CSV",
+        "category": "RunQL",
+        "shortTitle": "Export to CSV",
         "icon": {
           "dark": "media/icons/lucide/dark/download.svg",
           "light": "media/icons/lucide/light/download.svg"
@@ -367,11 +473,15 @@
       },
       {
         "command": "runql.schema.selectForCompare",
-        "title": "Select for Compare"
+        "title": "Select for Compare",
+        "category": "RunQL",
+        "shortTitle": "Select for Compare"
       },
       {
         "command": "runql.schema.compareWithSelected",
-        "title": "Compare with Selected"
+        "title": "Compare with Selected",
+        "category": "RunQL",
+        "shortTitle": "Compare with Selected"
       },
       {
         "command": "runql.schema.compareSchemas",
@@ -683,6 +793,12 @@
         }
       ]
     },
+    "submenus": [
+      {
+        "id": "runql.schema.sqlTemplateMenu",
+        "label": "SQL Template"
+      }
+    ],
     "menus": {
       "editor/title": [
         {
@@ -874,6 +990,75 @@
           "command": "runql.connection.exportToCsv",
           "when": "(view == runql.explorerView || view == runql.explorerViewBuiltin) && viewItem == runql.schema.table",
           "group": "3_export@1"
+        },
+
+        {
+          "command": "runql.schema.copyTableName",
+          "when": "(view == runql.explorerView || view == runql.explorerViewBuiltin) && (viewItem == runql.schema.table || viewItem == runql.schema.table.noexport || viewItem == runql.schema.table.reserved)",
+          "group": "1_copy@1"
+        },
+        {
+          "command": "runql.schema.editTable",
+          "when": "(view == runql.explorerView || view == runql.explorerViewBuiltin) && (viewItem == runql.schema.table || viewItem == runql.schema.table.noexport || viewItem == runql.schema.table.reserved)",
+          "group": "2_manage@1"
+        },
+        {
+          "command": "runql.schema.showTableDdl",
+          "when": "(view == runql.explorerView || view == runql.explorerViewBuiltin) && (viewItem == runql.schema.table || viewItem == runql.schema.table.noexport || viewItem == runql.schema.table.reserved)",
+          "group": "2_manage@2"
+        },
+        {
+          "submenu": "runql.schema.sqlTemplateMenu",
+          "when": "(view == runql.explorerView || view == runql.explorerViewBuiltin) && (viewItem == runql.schema.table || viewItem == runql.schema.table.noexport || viewItem == runql.schema.table.reserved)",
+          "group": "3_generate@1"
+        },
+        {
+          "command": "runql.schema.dumpStructure",
+          "when": "(view == runql.explorerView || view == runql.explorerViewBuiltin) && (viewItem == runql.schema.table || viewItem == runql.schema.table.noexport || viewItem == runql.schema.table.reserved)",
+          "group": "3_generate@2"
+        },
+        {
+          "command": "runql.schema.dumpStructureAndData",
+          "when": "(view == runql.explorerView || view == runql.explorerViewBuiltin) && (viewItem == runql.schema.table || viewItem == runql.schema.table.reserved)",
+          "group": "3_generate@3"
+        },
+        {
+          "command": "runql.schema.generateMockData",
+          "when": "(view == runql.explorerView || view == runql.explorerViewBuiltin) && (viewItem == runql.schema.table || viewItem == runql.schema.table.noexport || viewItem == runql.schema.table.reserved)",
+          "group": "3_generate@4"
+        },
+        {
+          "command": "runql.schema.dropTable",
+          "when": "(view == runql.explorerView || view == runql.explorerViewBuiltin) && (viewItem == runql.schema.table || viewItem == runql.schema.table.noexport || viewItem == runql.schema.table.reserved)",
+          "group": "4_destructive@1"
+        },
+        {
+          "command": "runql.schema.copyTable",
+          "when": "(view == runql.explorerView || view == runql.explorerViewBuiltin) && (viewItem == runql.schema.table || viewItem == runql.schema.table.noexport || viewItem == runql.schema.table.reserved)",
+          "group": "4_destructive@2"
+        },
+        {
+          "command": "runql.schema.truncateTable",
+          "when": "(view == runql.explorerView || view == runql.explorerViewBuiltin) && (viewItem == runql.schema.table || viewItem == runql.schema.table.noexport || viewItem == runql.schema.table.reserved)",
+          "group": "4_destructive@3"
+        }
+      ],
+      "runql.schema.sqlTemplateMenu": [
+        {
+          "command": "runql.schema.sqlTemplate.select",
+          "group": "1_template@1"
+        },
+        {
+          "command": "runql.schema.sqlTemplate.insert",
+          "group": "1_template@2"
+        },
+        {
+          "command": "runql.schema.sqlTemplate.update",
+          "group": "1_template@3"
+        },
+        {
+          "command": "runql.schema.sqlTemplate.delete",
+          "group": "1_template@4"
         }
       ],
       "view/title": [

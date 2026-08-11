@@ -10,3 +10,4 @@ coverage/
 *.log
 junit.xml
 .jest-cache/
+src/specs/

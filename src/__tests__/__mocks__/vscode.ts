@@ -201,6 +201,7 @@ export const window = {
   onDidChangeTextEditorSelection: jest.fn(),
   visibleTextEditors: [],
   withProgress: jest.fn((options, task) => task({ report: jest.fn() }, { isCancellationRequested: false })),
+  setStatusBarMessage: jest.fn(),
 };
 
 export const commands = {

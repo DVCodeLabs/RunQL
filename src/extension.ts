@@ -94,6 +94,7 @@ import { updateProjectInitializedContext, isProjectInitialized } from './core/is
 import { WelcomeView } from './ui/welcomeView';
 import { CreateTableView, CreateTablePanelContext, CreateTableResultPayload } from './ui/createTableView';
 import { buildCreateTableSql, buildAlterTableSql, buildDropTableSql, CreateTableDraft } from './core/createTableSql';
+import { registerTableContextCommands } from './commands/tableContextCommands';
 import {
   getKeyInfo,
   getQueryApprovalRequest,
@@ -2722,6 +2723,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       explorerProvider.refresh();
     })
   );
+
+  // Table context-menu commands (see src/specs/table-item-context-menu.md)
+  registerTableContextCommands(context, explorerProvider);
 
   // Storage-root change listener — must be registered before watchers so
   // watchers can subscribe to the change event.

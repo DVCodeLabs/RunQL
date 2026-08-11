@@ -99,10 +99,12 @@ export async function saveConnectionProfile(profile: ConnectionProfile): Promise
   const diskIdx = diskConnections.findIndex((c) => c.id === profile.id);
   const diskProfile = diskIdx >= 0 ? diskConnections[diskIdx] : undefined;
 
-  // Always work with a fresh object so we never mutate the caller's
-  // profile in place. Mutating it would advance the caller's
-  // `updatedAt` and break the baseline they'd hand back for a
-  // subsequent save.
+  // Work with a fresh object so intermediate mutations don't leak
+  // into the caller before the save succeeds. On success we propagate
+  // the new `updatedAt` back to the caller so a subsequent save from
+  // the same in-memory reference has a fresh baseline — otherwise our
+  // own prior write looks like a foreign edit and fires a false
+  // conflict prompt.
   let resolvedProfile: ConnectionProfile = { ...profile };
 
   if (diskProfile) {
@@ -121,17 +123,24 @@ export async function saveConnectionProfile(profile: ConnectionProfile): Promise
       const detail = conflictKnown
         ? `Connection "${profile.name}" was modified in another VS Code window since you started editing.`
         : `Connection "${profile.name}" has no reliable last-modified timestamp on one side, so RunQL can't be sure whether the disk copy has moved on. Choose which version to keep.`;
+      // Modal dialogs auto-add a Cancel button, so do NOT list
+      // 'Cancel' explicitly — that produces two Cancel buttons.
       const choice = await vscode.window.showWarningMessage(
         detail,
         { modal: true },
         'Keep Current Window Version',
-        'Keep Disk Version',
-        'Cancel'
+        'Keep Disk Version'
       );
-      if (!choice || choice === 'Cancel') {
+      if (!choice) {
         throw new Error('Save cancelled: connection was modified in another window.');
       }
       if (choice === 'Keep Disk Version') {
+        // Advance the caller's baseline to the disk's timestamp so
+        // their next save compares against the version they just
+        // agreed to accept, not the pre-conflict baseline.
+        if (diskProfile.updatedAt) {
+          profile.updatedAt = diskProfile.updatedAt;
+        }
         return;
       }
       // Keep Current Window Version → fall through and overwrite.
@@ -166,6 +175,12 @@ export async function saveConnectionProfile(profile: ConnectionProfile): Promise
     connections: merged,
   };
   await writeJson(uri, file);
+
+  // Propagate the fresh `updatedAt` back to the caller so subsequent
+  // saves from the same in-memory profile use an accurate baseline —
+  // without this, our own last write triggers a spurious conflict
+  // prompt the next time this profile is saved.
+  profile.updatedAt = resolvedProfile.updatedAt;
 }
 
 export async function deleteConnection(id: string): Promise<void> {
