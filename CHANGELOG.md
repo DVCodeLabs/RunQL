@@ -277,7 +277,7 @@ RunQL now lets you choose where your RunQL files are stored.  You have three opt
 - Auto-opening Welcome for uninitialized projects no longer switches the Activity Bar to RunQL.
 - Initializing a RunQL project now switches the Activity Bar to RunQL after the user action succeeds.
 
-## [1.17]
+## [1.17.0]
 
 ### Changes
 
