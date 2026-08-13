@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { getTagVisuals } from "../core/connectionTagVisuals";
 
 type ConnectionId = string;
 export interface DocSchemaContext {
@@ -76,6 +77,7 @@ export class DPSqlCodelensProvider implements vscode.CodeLensProvider {
         private store: DPDocConnectionStore,
         private getConnectionLabel: (id?: string) => string,
         private getSchemaContextLabel?: (document: vscode.TextDocument, connectionId?: string) => string | undefined,
+        private getConnectionTag?: (id?: string) => string | undefined,
     ) { }
 
     refresh() {
@@ -97,8 +99,10 @@ export class DPSqlCodelensProvider implements vscode.CodeLensProvider {
 
         // Connection selector lens
         const displayLabel = connectionLabel === "Select Connection" ? "Default or No connection" : connectionLabel;
+        const tagVisuals = getTagVisuals(this.getConnectionTag?.(connectionId));
+        const leadingIcon = tagVisuals ? tagVisuals.emoji : '$(database)';
         lenses.push(new vscode.CodeLens(range, {
-            title: `$(database) ${displayLabel} $(chevron-down)`,
+            title: `${leadingIcon} ${displayLabel} $(chevron-down)`,
             command: "runql.sql.setConnectionForDoc",
             arguments: [document.uri]
         }));

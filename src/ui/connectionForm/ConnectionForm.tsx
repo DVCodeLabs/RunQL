@@ -8,6 +8,7 @@ import {
     DPProviderActionStatus,
     DPProviderDescriptor
 } from '../../core/types';
+import { TAG_VISUALS, getTagVisuals } from '../../core/connectionTagVisuals';
 
 interface ConnectionFormProps {
     vscode: any;
@@ -45,7 +46,7 @@ const DEFAULT_PROFILE: ProfileState = {
 
 const DEFAULT_SECRETS: SecretsState = {};
 const DEFAULT_LOCAL: LocalState = {};
-const CONNECTION_TAG_OPTIONS = ['production', 'staging', 'dev', 'reporting'];
+const CONNECTION_TAG_OPTIONS = Object.keys(TAG_VISUALS);
 
 function getFieldStorage(field: DPConnectionFieldSchema): DPConnectionFieldStorage {
     return field.storage ?? 'profile';
@@ -710,9 +711,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ vscode }) => {
                             onChange={(e) => setProfile((prev) => ({ ...prev, connectionTag: e.target.value || undefined }))}
                         >
                             <option value="">None</option>
-                            {CONNECTION_TAG_OPTIONS.map((option) => (
-                                <option key={option} value={option}>{option}</option>
-                            ))}
+                            {CONNECTION_TAG_OPTIONS.map((option) => {
+                                const visuals = getTagVisuals(option);
+                                const label = visuals ? `${visuals.emoji} ${option}` : option;
+                                return <option key={option} value={option}>{label}</option>;
+                            })}
                         </select>
                     </div>
 

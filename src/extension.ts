@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 
 import type { ScriptExecutionResult } from "./core/types";
 import { canonicalizeSql } from "./core/hashing";
+import { TAG_VISUALS, getTagVisuals, normalizeConnectionTag, readConnectionTagRaw } from "./core/connectionTagVisuals";
 import { Logger } from "./core/logger";
 
 // Tree views + watchers
@@ -217,22 +218,34 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
 
   const savedCache = context.workspaceState.get<Record<string, string>>(CACHE_KEY, {});
   const connectionNameCache = new Map<string, string>(Object.entries(savedCache));
+  const connectionTagCache = new Map<string, string>();
 
   let firstConnectionId: string | undefined = context.workspaceState.get<string>(FIRST_ID_KEY);
-  const productionWarningItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 1000);
-  productionWarningItem.text = '$(warning) PRODUCTION CONNECTION';
-  productionWarningItem.tooltip = 'RunQL warning: this SQL editor is using a production-tagged connection.';
-  productionWarningItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-  productionWarningItem.color = new vscode.ThemeColor('statusBarItem.errorForeground');
-  productionWarningItem.hide();
-  context.subscriptions.push(productionWarningItem);
+  const connectionTagStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 1000);
+  connectionTagStatusBarItem.hide();
+  context.subscriptions.push(connectionTagStatusBarItem);
+
+  const tagLine0Decorations = new Map<string, vscode.TextEditorDecorationType>();
+  for (const [tag, visuals] of Object.entries(TAG_VISUALS)) {
+    const dec = vscode.window.createTextEditorDecorationType({
+      isWholeLine: true,
+      borderWidth: '1px 0 0 0',
+      borderStyle: 'dashed',
+      borderColor: visuals.hex,
+    });
+    tagLine0Decorations.set(tag, dec);
+    context.subscriptions.push(dec);
+  }
 
   const updateConnectionCache = async () => {
     try {
       const profiles = await loadConnectionProfiles();
       connectionNameCache.clear();
+      connectionTagCache.clear();
       profiles.forEach(p => {
         connectionNameCache.set(p.id, p.name);
+        const tag = readConnectionTagRaw(p);
+        if (tag) connectionTagCache.set(p.id, tag);
       });
 
       if (profiles.length > 0) {
@@ -247,7 +260,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
 
       // Trigger forced refresh of lenses
       codeLensProvider.refresh();
-      await refreshProductionWarningBar();
+      await refreshConnectionTagIndicators();
     } catch (e) {
       Logger.error("Failed to update connection cache", e);
     }
@@ -1233,9 +1246,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     };
   };
 
-  const normalizeConnectionTag = (value: unknown): string => {
-    if (typeof value !== 'string') return '';
-    return value.trim().toLowerCase();
+  const getConnectionTagById = (id?: string): string | undefined => {
+    const effectiveId = getEffectiveConnectionId(id);
+    if (!effectiveId) return undefined;
+    return connectionTagCache.get(effectiveId);
   };
 
   const getActiveSqlConnectionProfile = async (): Promise<ConnectionProfile | undefined> => {
@@ -1250,24 +1264,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     return profiles.find((p) => p.id === effectiveId);
   };
 
-  const refreshProductionWarningBar = async (): Promise<void> => {
+  const applyLine0Decoration = (matchTag: string | undefined) => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return;
+    const isSql = isSqlDoc(editor.document);
+    const range = new vscode.Range(0, 0, 0, 0);
+    for (const [tag, dec] of tagLine0Decorations.entries()) {
+      editor.setDecorations(dec, isSql && tag === matchTag ? [range] : []);
+    }
+  };
+
+  const refreshConnectionTagIndicators = async (): Promise<void> => {
     if (!(await isProjectInitialized())) {
-      productionWarningItem.hide();
+      connectionTagStatusBarItem.hide();
+      applyLine0Decoration(undefined);
       return;
     }
 
     const profile = await getActiveSqlConnectionProfile();
-    const taggedProfile = profile as (ConnectionProfile & { tag?: string }) | undefined;
-    const tag = normalizeConnectionTag(taggedProfile?.connectionTag ?? taggedProfile?.tag);
+    const rawTag = readConnectionTagRaw(profile);
+    const visuals = getTagVisuals(rawTag);
 
-    if (!profile || tag !== 'production') {
-      productionWarningItem.hide();
+    if (!profile || !visuals) {
+      connectionTagStatusBarItem.hide();
+      applyLine0Decoration(undefined);
       return;
     }
 
-    productionWarningItem.text = `$(warning) PRODUCTION: ${profile.name}`;
-    productionWarningItem.tooltip = `RunQL warning: "${profile.name}" is tagged as production.`;
-    productionWarningItem.show();
+    const tagLower = normalizeConnectionTag(rawTag);
+    connectionTagStatusBarItem.text = `${visuals.emoji} ${visuals.label}: ${profile.name}`;
+    connectionTagStatusBarItem.tooltip = `RunQL: "${profile.name}" is tagged as ${tagLower}.`;
+    connectionTagStatusBarItem.color = visuals.hex;
+    connectionTagStatusBarItem.show();
+    applyLine0Decoration(tagLower);
   };
 
   const getConnectionLabel = (id?: string) => {
@@ -1308,6 +1337,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     codeLensStore,
     getConnectionLabel,
     getSchemaContextLabel,
+    getConnectionTagById,
   );
 
   context.subscriptions.push(
@@ -1335,7 +1365,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     context,
     codeLensStore,
     () => codeLensProvider.refresh(),
-    () => { void refreshProductionWarningBar(); }
+    () => { void refreshConnectionTagIndicators(); }
   );
   // Toggle System Schemas Command
   context.subscriptions.push(
@@ -1891,7 +1921,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
         await queryIndex.updateConnectionContext(editor.document.uri, profile.id, profile.name, resolveEffectiveSqlDialect(profile));
       }
 
-      void refreshProductionWarningBar();
+      void refreshConnectionTagIndicators();
     })
   );
 
@@ -1920,7 +1950,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     explorerProvider.setActiveId(initialConnId);
     await setHasActiveConnection(true);
   }
-  void refreshProductionWarningBar();
+  void refreshConnectionTagIndicators();
 
   // RUN QUERY COMMAND
   context.subscriptions.push(
@@ -2992,7 +3022,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
   // Re-render overlays when active editor changes
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(async (editor) => {
-      await refreshProductionWarningBar();
+      await refreshConnectionTagIndicators();
 
       // Update similar queries context
       await updateSimilarQueriesContext(editor);

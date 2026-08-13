@@ -6,6 +6,7 @@ import { loadDescriptions } from "../schema/descriptionStore";
 import { isProjectInitialized } from "../core/isProjectInitialized";
 import { quoteIdentifier } from "../core/sqlUtils";
 import { isDbAdminConnection } from "./connectionType";
+import { getTagVisuals, normalizeConnectionTag, readConnectionTagRaw } from "../core/connectionTagVisuals";
 
 type ExplorerFolderKind = "tables" | "views" | "procedures" | "functions";
 type TableDetailFolderKind = "columns" | "keys" | "foreignKeys" | "indexes";
@@ -281,7 +282,10 @@ export class ExplorerItem extends vscode.TreeItem {
     const isActive = p.id === activeId;
     const label = `${p.name}${isActive ? ' (Active)' : ''}`;
     const dialect = p.dialect || String((p as unknown as Record<string, unknown>).type ?? '?');
-    const description = `${dialect}${p.database ? ` • ${p.database}` : ""}${p.host ? ` • ${p.host}` : ""}`;
+    const rawTag = readConnectionTagRaw(p);
+    const tagVisuals = getTagVisuals(rawTag);
+    const tagSuffix = tagVisuals ? ` • ${tagVisuals.emoji} ${normalizeConnectionTag(rawTag)}` : "";
+    const description = `${dialect}${p.database ? ` • ${p.database}` : ""}${p.host ? ` • ${p.host}` : ""}${tagSuffix}`;
 
     // Collapsible to show schemas
     const item = new ExplorerItem(

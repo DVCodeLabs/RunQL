@@ -343,6 +343,13 @@ export class WelcomeView {
                         );
                         break;
 
+                    case 'openCodeLensFontSetting':
+                        await vscode.commands.executeCommand(
+                            'workbench.action.openSettings',
+                            'editor.codeLensFontSize'
+                        );
+                        break;
+
                     case 'openExtensionSearch': {
                         const extensionQuery = typeof message.extensionQuery === 'string' ? message.extensionQuery : '';
                         if (!extensionQuery) {

@@ -815,6 +815,10 @@ function App() {
         vscode.postMessage({ command: 'openExtensionSearch', extensionQuery });
     };
 
+    const handleOpenCodeLensFontSetting = () => {
+        vscode.postMessage({ command: 'openCodeLensFontSetting' });
+    };
+
     const workspaceRequired = storage?.location !== 'user' && storage?.location !== 'custom';
     const canResolveStorage = storage?.resolvedPath != null;
     const step1Complete = workspaceRequired ? hasWorkspace === true : canResolveStorage;
@@ -1139,6 +1143,13 @@ function App() {
                         title={canUseInitializedActions ? 'Open README_RUNQL.md' : 'Initialize RunQL to create README_RUNQL.md.'}
                     >
                         📘 Open README_RUNQL.md
+                    </button>
+                    <button
+                        style={{ ...styles.button, ...styles.secondaryButton }}
+                        onClick={handleOpenCodeLensFontSetting}
+                        title="Adjust the height of the SQL toolbar (connection selector, Run, Save, etc.) via editor.codeLensFontSize"
+                    >
+                        🔎 Adjust SQL Toolbar Size
                     </button>
                 </div>
                 <p style={{ ...styles.statusNote, marginBottom: 0 }}>

@@ -304,3 +304,17 @@ RunQL generates SQL for your database:
 - MS SQL
 
 Export permissions on SecureQL connections continue to be enforced if you have them set for your organization.
+
+## [1.17.1]
+
+### Changes
+
+Environment tag indicators in the SQL file editor, RunQL Explorer, add new connections, and the status bar.
+
+- Connection tag (production / staging / dev / reporting) now surfaces as
+  an emoji + label everywhere the connection is referenced: CodeLens
+  header, a colored dashed line under the toolbar in the editor, status
+  bar, explorer description, and the connection-form dropdown. Prior
+  behavior was a prod-only red status bar warning.
+- Welcome page gains an "Adjust SQL Toolbar/CodeLens Size" button that opens
+  editor.codeLensFontSize in VS Code settings.
