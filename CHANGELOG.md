@@ -318,3 +318,7 @@ Environment tag indicators in the SQL file editor, RunQL Explorer, add new conne
   behavior was a prod-only red status bar warning.
 - Welcome page gains an "Adjust SQL Toolbar/CodeLens Size" button that opens
   editor.codeLensFontSize in VS Code settings.
+
+## [1.17.2]
+
+### Changes
