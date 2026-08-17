@@ -322,3 +322,5 @@ Environment tag indicators in the SQL file editor, RunQL Explorer, add new conne
 ## [1.17.2]
 
 ### Changes
+
+Bumping the version for the RunQL-IDE build process which fixes a Windows client update issue.
