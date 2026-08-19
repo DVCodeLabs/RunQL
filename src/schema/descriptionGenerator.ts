@@ -1,10 +1,12 @@
 import * as vscode from 'vscode';
 import { SchemaIntrospection, TableModel } from '../core/types';
 import { getConfiguredAIProvider, openAiProviderSettings } from '../ai/aiService';
+import { createFileEditingBrokerPrompt, maybeHandleBrokerTask } from '../ai/broker';
 import { loadPromptTemplate, renderPrompt } from '../ai/prompts';
 import { SchemaDescriptionsFile, loadDescriptions, saveDescriptions } from './descriptionStore';
 import { Logger } from '../core/logger';
 import { ErrorHandler, ErrorSeverity, formatSchemaError, formatAIError } from '../core/errorHandler';
+import { ensureDPDirs } from '../core/fsWorkspace';
 import { getDescriptionUriForConnection } from './schemaPaths';
 
 interface SchemaGeneratorItem {
@@ -71,7 +73,8 @@ export async function generateDescriptionsWithAI(context: vscode.ExtensionContex
 
     // Load existing
     const targetSchemaName = schemas[0]?.name || 'main';
-    let existing = await loadDescriptions(introspection.connectionId, introspection.connectionName, targetSchemaName);
+    const existingDescriptions = await loadDescriptions(introspection.connectionId, introspection.connectionName, targetSchemaName);
+    let existing = existingDescriptions;
 
     if (!existing) {
         existing = {
@@ -86,6 +89,38 @@ export async function generateDescriptionsWithAI(context: vscode.ExtensionContex
             tables: {},
             columns: {}
         };
+    }
+
+    const dpDir = await ensureDPDirs();
+    const descriptionUri = await getDescriptionUriForConnection(dpDir, introspection.connectionId, introspection.connectionName, targetSchemaName);
+
+    if (!existingDescriptions) {
+        await saveDescriptions(introspection.connectionId, introspection.connectionName, existing, targetSchemaName);
+    }
+
+    const firstWorkspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    const workspaceRoot = vscode.workspace.getWorkspaceFolder?.(descriptionUri)?.uri?.fsPath
+        ?? firstWorkspaceFolder?.uri?.fsPath
+        ?? dpDir?.fsPath
+        ?? descriptionUri.fsPath;
+    const brokerPrompt = buildFileEditingPrompt(schemas, existing, descriptionUri.fsPath);
+    const brokerResult = await maybeHandleBrokerTask({
+        title: `Generate schema descriptions for ${introspection.connectionName || introspection.connectionId}.${targetSchemaName}`,
+        prompt: createFileEditingBrokerPrompt(brokerPrompt, {
+            workspaceRoot,
+            targetFiles: [descriptionUri.fsPath],
+            primaryTarget: descriptionUri.fsPath,
+            allowCommands: false
+        }),
+        workspaceRoot,
+        targetFiles: [descriptionUri.fsPath],
+        expectedWriteTargets: [descriptionUri.fsPath],
+        contextFiles: [descriptionUri.fsPath],
+        primaryTarget: descriptionUri.fsPath,
+        allowCommands: false
+    });
+    if (brokerResult?.handled) {
+        return;
     }
 
     const ai = await getConfiguredAIProvider(context, { requireConfigured: true });
@@ -207,11 +242,59 @@ export async function generateDescriptionsWithAI(context: vscode.ExtensionContex
         vscode.commands.executeCommand("runql.view.refreshSchemas"); // Refresh UI
 
         // Open the file for the user
-        const dpDir = await import('../core/fsWorkspace').then(m => m.ensureDPDirs());
-        const uri = await getDescriptionUriForConnection(dpDir, introspection.connectionId, introspection.connectionName, targetSchemaName);
-        const doc = await vscode.workspace.openTextDocument(uri);
+        const doc = await vscode.workspace.openTextDocument(descriptionUri);
         await vscode.window.showTextDocument(doc);
     });
+}
+
+function buildFileEditingPrompt(
+    schemas: SchemaIntrospection['schemas'],
+    existing: SchemaDescriptionsFile,
+    descriptionPath: string
+): string {
+    const schemaPayload = schemas.map(schema => ({
+        name: schema.name,
+        tables: schema.tables.map(toPromptTable),
+        views: (schema.views || []).map(toPromptTable)
+    }));
+
+    return [
+        '# Schema Description File Update',
+        '',
+        `Update the RunQL schema description JSON file at: ${descriptionPath}`,
+        '',
+        'Edit the file directly. Do not provide a chat-only answer.',
+        '',
+        'Rules:',
+        '- Keep the existing JSON shape and valid JSON formatting.',
+        '- Preserve entries where source is "manual".',
+        '- Add or update missing entries and entries where source is "ai".',
+        '- Use keys in the form "schema.table" for tables and "schema.table.column" for columns.',
+        '- Use concise analyst-friendly descriptions.',
+        '- Include realistic sampleValue strings for columns when useful.',
+        '- Do not modify files other than the target description file.',
+        '',
+        'Current description file content:',
+        '```json',
+        JSON.stringify(existing, null, 2),
+        '```',
+        '',
+        'Schema introspection context:',
+        '```json',
+        JSON.stringify(schemaPayload, null, 2),
+        '```'
+    ].join('\n');
+}
+
+function toPromptTable(table: TableModel) {
+    return {
+        name: table.name,
+        columns: table.columns.map(column => ({
+            name: column.name,
+            type: column.type,
+            comment: column.comment || ''
+        }))
+    };
 }
 
 async function buildPrompt(schemaName: string, table: TableModel, includeTable: boolean, includeColumns: boolean): Promise<string> {

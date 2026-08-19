@@ -117,7 +117,8 @@ export function createFileEditingBrokerPrompt(basePrompt: string, task: Pick<Bro
     lines.push('Requirements:');
     lines.push('- Keep changes minimal and focused.');
     lines.push('- Do not modify files outside the allowlist.');
-    lines.push('- Edit the target file directly when your environment supports file edits.');
+    lines.push('- Edit the target file directly. Do not return the full file content as a chat-only answer.');
+    lines.push('- After editing, respond with a short summary of the file changed.');
     if (!task.allowCommands) {
         lines.push('- Do not run shell commands unless they are strictly required.');
     }
@@ -278,7 +279,22 @@ async function isBrokerAvailable(id: BrokerId): Promise<boolean> {
     }
 }
 
+async function revealPrimaryTargetFile(task: BrokerTask): Promise<void> {
+    const target = task.primaryTarget || task.targetFiles[0];
+    if (!target) {
+        return;
+    }
+
+    try {
+        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(target));
+        await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
+    } catch (error) {
+        Logger.warn(`Failed to reveal target file ${target}`, error);
+    }
+}
+
 async function runClaudeExtensionHandoff(task: BrokerTask): Promise<BrokerResult> {
+    await revealPrimaryTargetFile(task);
     await vscode.env.clipboard.writeText(task.prompt);
     const commands = await vscode.commands.getCommands(true);
     let opened = false;
@@ -298,7 +314,7 @@ async function runClaudeExtensionHandoff(task: BrokerTask): Promise<BrokerResult
     }
 
     const message = opened
-        ? 'Prompt loaded in Claude Code. Submit there to continue.'
+        ? 'Direct file-edit instructions loaded in Claude Code. Submit there to continue.'
         : 'Claude Code could not be opened automatically. The prompt was copied to your clipboard.';
 
     vscode.window.showInformationMessage(message);
@@ -314,6 +330,30 @@ async function runClaudeExtensionHandoff(task: BrokerTask): Promise<BrokerResult
 
 async function runCodexExtensionHandoff(task: BrokerTask): Promise<BrokerResult> {
     const commands = await vscode.commands.getCommands(true);
+    await revealPrimaryTargetFile(task);
+
+    if (commands.includes('chatgpt.implementTodo') && task.primaryTarget) {
+        try {
+            await vscode.commands.executeCommand('chatgpt.implementTodo', {
+                fileName: task.primaryTarget,
+                cwd: task.workspaceRoot,
+                line: 1,
+                comment: task.prompt
+            });
+            const message = 'Direct file-edit instructions sent to Codex. Submit there to continue.';
+            vscode.window.showInformationMessage(message);
+            return {
+                handled: true,
+                providerId: 'codexExtension',
+                mode: 'handoff',
+                status: 'userActionRequired',
+                message
+            };
+        } catch (error) {
+            Logger.warn('Failed to send RunQL instructions through Codex implementTodo. Falling back to context attachment.', error);
+        }
+    }
+
     const openCommand = CODEX_COMMAND_OPEN.find((candidate) => commands.includes(candidate));
     if (!openCommand) {
         vscode.window.showWarningMessage('Codex commands are not available in this editor instance.');
@@ -368,7 +408,7 @@ async function runCodexExtensionHandoff(task: BrokerTask): Promise<BrokerResult>
     }
 
     await vscode.env.clipboard.writeText(task.prompt);
-    const message = 'Context attached to Codex. The prompt was copied to your clipboard; paste it into the Codex composer to continue.';
+    const message = 'Context attached to Codex. Direct file-edit instructions were copied to your clipboard; paste them into the Codex composer to continue.';
     vscode.window.showInformationMessage(message);
 
     return {

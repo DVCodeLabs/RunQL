@@ -330,3 +330,9 @@ Bumping the version for the RunQL-IDE build process which fixes a Windows client
 ### Changes
 
 Make AI-generated schema documentation more integrated into your workflows and make the feature more obvious overall.
+
+## [1.17.4]
+
+### Changes
+
+Better integration with Claude Code and Codex!  Click the button and the prompt will be given to Claude Code or Codex (depending on what you have configured).  We now use the chatgpt.implementTodo for Codex now, so no more copy/paste required!
