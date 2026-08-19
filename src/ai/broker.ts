@@ -48,6 +48,12 @@ interface InstalledExtensionOption {
 
 const CONFIG_SECTION = 'runql';
 const CLAUDE_EXTENSION_ID = 'anthropic.claude-code';
+const CODEX_EXTENSION_ID = 'openai.chatgpt';
+const CODEX_COMMAND_OPEN = ['chatgpt.openSidebar', 'chatgpt.newCodexPanel'];
+// The persisted key predates the broader behavior: it is now set once
+// the detected-extension prompt has been resolved in any way.
+const DETECTED_AI_EXTENSION_PROMPT_HANDLED_KEY = 'runql.ai.detectedExtensionPromptIgnored.v1';
+let detectedAIExtensionPromptInFlight = false;
 
 async function updateConfig(key: string, value: string): Promise<void> {
     const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
@@ -56,8 +62,12 @@ async function updateConfig(key: string, value: string): Promise<void> {
         await config.update(key, value, vscode.ConfigurationTarget.Workspace);
     }
 }
-const CODEX_EXTENSION_ID = 'openai.chatgpt';
-const CODEX_COMMAND_OPEN = ['chatgpt.openSidebar', 'chatgpt.newCodexPanel'];
+
+async function configureInstalledExtensionChoice(id: BrokerId): Promise<void> {
+    await updateConfig('ai.source', 'aiExtension');
+    await updateConfig('ai.extension', id);
+    await updateConfig('ai.installedExtensionChoice', id);
+}
 
 function getConfig(): BrokerConfig {
     const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
@@ -149,10 +159,64 @@ export async function selectInstalledExtensionChoice(): Promise<void> {
         return;
     }
 
-    await updateConfig('ai.source', 'aiExtension');
-    await updateConfig('ai.extension', picked.option.id);
-    await updateConfig('ai.installedExtensionChoice', picked.option.id);
+    await configureInstalledExtensionChoice(picked.option.id);
     vscode.window.showInformationMessage(`AI extension set to ${picked.option.label}.`);
+}
+
+export async function promptForDetectedAIExtension(context: vscode.ExtensionContext): Promise<void> {
+    if (detectedAIExtensionPromptInFlight) {
+        return;
+    }
+
+    if (context.globalState.get<boolean>(DETECTED_AI_EXTENSION_PROMPT_HANDLED_KEY) === true) {
+        return;
+    }
+
+    detectedAIExtensionPromptInFlight = true;
+    try {
+        const config = getConfig();
+        if (config.broker === 'claudeExtension' || config.broker === 'codexExtension') {
+            await context.globalState.update(DETECTED_AI_EXTENSION_PROMPT_HANDLED_KEY, true);
+            return;
+        }
+
+        const options = await getInstalledExtensionOptions();
+        if (options.length === 0) {
+            return;
+        }
+
+        const configureLabels = new Map<string, BrokerId>();
+        const actions = options.map((option) => {
+            const label = `Use ${option.label} for RunQL`;
+            configureLabels.set(label, option.id);
+            return label;
+        });
+        const ignore = 'Ignore';
+        const detectedNames = options.map((option) => option.label).join(options.length === 2 ? ' and ' : ', ');
+        const picked = await vscode.window.showInformationMessage(
+            `RunQL detected ${detectedNames}. Use an installed AI extension for direct file edits? RunQL will update settings automatically.`,
+            ...actions,
+            ignore
+        );
+
+        if (!picked || picked === ignore) {
+            await context.globalState.update(DETECTED_AI_EXTENSION_PROMPT_HANDLED_KEY, true);
+            return;
+        }
+
+        const selected = configureLabels.get(picked);
+        if (!selected) {
+            await context.globalState.update(DETECTED_AI_EXTENSION_PROMPT_HANDLED_KEY, true);
+            return;
+        }
+
+        await configureInstalledExtensionChoice(selected);
+        await context.globalState.update(DETECTED_AI_EXTENSION_PROMPT_HANDLED_KEY, true);
+        const selectedOption = options.find((option) => option.id === selected);
+        vscode.window.showInformationMessage(`RunQL AI configured for ${selectedOption?.label || 'the selected AI extension'}.`);
+    } finally {
+        detectedAIExtensionPromptInFlight = false;
+    }
 }
 
 export async function maybeHandleBrokerTask(task: BrokerTask): Promise<BrokerResult | null> {

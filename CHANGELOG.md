@@ -336,3 +336,10 @@ Make AI-generated schema documentation more integrated into your workflows and m
 ### Changes
 
 Better integration with Claude Code and Codex!  Click the button and the prompt will be given to Claude Code or Codex (depending on what you have configured).  We now use the chatgpt.implementTodo for Codex now, so no more copy/paste required!
+
+## [1.17.5]
+
+### Changes
+
+Better integration with Claude Code and Codex!  Click the button and the prompt will be given to Claude Code or Codex (depending on what you have configured).  We now use the chatgpt.implementTodo for Codex now, so no more copy/paste required!
+Auto-detection of Claude Code/Codex and give you the option to one-click setup RunQL for use with your preferred AI.

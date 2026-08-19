@@ -3237,6 +3237,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     });
   }
 
+  void (async () => {
+    try {
+      const { promptForDetectedAIExtension } = await import('./ai/broker');
+      await promptForDetectedAIExtension(context);
+    } catch (err) {
+      Logger.warn("Failed to prompt for detected AI extension", err);
+    }
+  })();
+
   return {
     registerProvider: (descriptor) => ProviderRegistry.getInstance().registerProvider(descriptor),
     registerAdapter: (dialect, factory) => registerAdapter(dialect, factory),

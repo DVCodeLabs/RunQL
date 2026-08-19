@@ -1,18 +1,24 @@
 import * as vscode from 'vscode';
-import { createFileEditingBrokerPrompt, maybeHandleBrokerTask } from '../broker';
+import { createFileEditingBrokerPrompt, maybeHandleBrokerTask, promptForDetectedAIExtension } from '../broker';
 
 describe('broker file-editing handoff', () => {
+    let configGet: jest.Mock;
+    let configUpdate: jest.Mock;
+
     beforeEach(() => {
         jest.clearAllMocks();
-        (vscode.workspace.getConfiguration as jest.Mock).mockReturnValue({
-            get: jest.fn((key: string, fallback: unknown) => {
-                if (key === 'ai.source') return 'aiExtension';
-                if (key === 'ai.extension') return 'codexExtension';
-                if (key === 'ai.installedExtensionChoice') return '';
-                return fallback;
-            }),
-            update: jest.fn(),
+        configGet = jest.fn((key: string, fallback: unknown) => {
+            if (key === 'ai.source') return 'aiExtension';
+            if (key === 'ai.extension') return 'codexExtension';
+            if (key === 'ai.installedExtensionChoice') return '';
+            return fallback;
         });
+        configUpdate = jest.fn().mockResolvedValue(undefined);
+        (vscode.workspace.getConfiguration as jest.Mock).mockReturnValue({
+            get: configGet,
+            update: configUpdate,
+        });
+        (vscode.workspace as unknown as { workspaceFolders: vscode.WorkspaceFolder[] }).workspaceFolders = [];
         (vscode as unknown as { extensions: { getExtension: jest.Mock } }).extensions = {
             getExtension: jest.fn((id: string) => id === 'openai.chatgpt' ? { id } : undefined),
         };
@@ -101,5 +107,146 @@ describe('broker file-editing handoff', () => {
             content: expect.any(String),
         }));
         expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith('Edit /workspace/query.md directly.');
+    });
+
+    test('prompts to configure Codex when the extension is detected', async () => {
+        configGet.mockImplementation((key: string, fallback: unknown) => {
+            if (key === 'ai.source') return 'githubCopilot';
+            if (key === 'ai.extension') return '';
+            if (key === 'ai.installedExtensionChoice') return '';
+            return fallback;
+        });
+        (vscode.window.showInformationMessage as jest.Mock)
+            .mockResolvedValueOnce('Use Codex for RunQL')
+            .mockResolvedValue(undefined);
+        const context = {
+            globalState: {
+                get: jest.fn().mockReturnValue(false),
+                update: jest.fn().mockResolvedValue(undefined),
+            },
+        } as unknown as vscode.ExtensionContext;
+
+        await promptForDetectedAIExtension(context);
+
+        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+            expect.stringContaining('RunQL detected Codex'),
+            'Use Codex for RunQL',
+            'Ignore'
+        );
+        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+            expect.stringContaining('RunQL will update settings automatically.'),
+            'Use Codex for RunQL',
+            'Ignore'
+        );
+        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('RunQL AI configured for Codex.');
+        expect(configUpdate).toHaveBeenCalledWith('ai.source', 'aiExtension', vscode.ConfigurationTarget.Global);
+        expect(configUpdate).toHaveBeenCalledWith('ai.extension', 'codexExtension', vscode.ConfigurationTarget.Global);
+        expect(configUpdate).toHaveBeenCalledWith('ai.installedExtensionChoice', 'codexExtension', vscode.ConfigurationTarget.Global);
+        expect(context.globalState.update).toHaveBeenCalledWith('runql.ai.detectedExtensionPromptIgnored.v1', true);
+    });
+
+    test('maps the selected button correctly when Claude Code and Codex are both detected', async () => {
+        configGet.mockImplementation((key: string, fallback: unknown) => {
+            if (key === 'ai.source') return 'githubCopilot';
+            if (key === 'ai.extension') return '';
+            if (key === 'ai.installedExtensionChoice') return '';
+            return fallback;
+        });
+        (vscode as unknown as { extensions: { getExtension: jest.Mock } }).extensions.getExtension
+            .mockImplementation((id: string) => id === 'openai.chatgpt' || id === 'anthropic.claude-code' ? { id } : undefined);
+        (vscode.window.showInformationMessage as jest.Mock)
+            .mockResolvedValueOnce('Use Claude Code for RunQL')
+            .mockResolvedValue(undefined);
+        const context = {
+            globalState: {
+                get: jest.fn().mockReturnValue(false),
+                update: jest.fn().mockResolvedValue(undefined),
+            },
+        } as unknown as vscode.ExtensionContext;
+
+        await promptForDetectedAIExtension(context);
+
+        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+            expect.stringContaining('RunQL detected Codex and Claude Code'),
+            'Use Codex for RunQL',
+            'Use Claude Code for RunQL',
+            'Ignore'
+        );
+        expect(configUpdate).toHaveBeenCalledWith('ai.source', 'aiExtension', vscode.ConfigurationTarget.Global);
+        expect(configUpdate).toHaveBeenCalledWith('ai.extension', 'claudeExtension', vscode.ConfigurationTarget.Global);
+        expect(configUpdate).toHaveBeenCalledWith('ai.installedExtensionChoice', 'claudeExtension', vscode.ConfigurationTarget.Global);
+        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('RunQL AI configured for Claude Code.');
+        expect(context.globalState.update).toHaveBeenCalledWith('runql.ai.detectedExtensionPromptIgnored.v1', true);
+    });
+
+    test('stores the ignore choice when the detected extension prompt is ignored', async () => {
+        configGet.mockImplementation((key: string, fallback: unknown) => {
+            if (key === 'ai.source') return 'githubCopilot';
+            if (key === 'ai.extension') return '';
+            if (key === 'ai.installedExtensionChoice') return '';
+            return fallback;
+        });
+        (vscode.window.showInformationMessage as jest.Mock).mockResolvedValue('Ignore');
+        const context = {
+            globalState: {
+                get: jest.fn().mockReturnValue(false),
+                update: jest.fn().mockResolvedValue(undefined),
+            },
+        } as unknown as vscode.ExtensionContext;
+
+        await promptForDetectedAIExtension(context);
+
+        expect(context.globalState.update).toHaveBeenCalledWith('runql.ai.detectedExtensionPromptIgnored.v1', true);
+        expect(configUpdate).not.toHaveBeenCalled();
+    });
+
+    test('stores the handled choice when the detected extension prompt is dismissed', async () => {
+        configGet.mockImplementation((key: string, fallback: unknown) => {
+            if (key === 'ai.source') return 'githubCopilot';
+            if (key === 'ai.extension') return '';
+            if (key === 'ai.installedExtensionChoice') return '';
+            return fallback;
+        });
+        (vscode.window.showInformationMessage as jest.Mock).mockResolvedValue(undefined);
+        const context = {
+            globalState: {
+                get: jest.fn().mockReturnValue(false),
+                update: jest.fn().mockResolvedValue(undefined),
+            },
+        } as unknown as vscode.ExtensionContext;
+
+        await promptForDetectedAIExtension(context);
+
+        expect(context.globalState.update).toHaveBeenCalledWith('runql.ai.detectedExtensionPromptIgnored.v1', true);
+        expect(configUpdate).not.toHaveBeenCalled();
+    });
+
+    test('does not prompt again after the detected extension prompt is ignored', async () => {
+        const context = {
+            globalState: {
+                get: jest.fn().mockReturnValue(true),
+                update: jest.fn().mockResolvedValue(undefined),
+            },
+        } as unknown as vscode.ExtensionContext;
+
+        await promptForDetectedAIExtension(context);
+
+        expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+        expect(configUpdate).not.toHaveBeenCalled();
+    });
+
+    test('marks the prompt handled when RunQL is already configured for an AI extension', async () => {
+        const context = {
+            globalState: {
+                get: jest.fn().mockReturnValue(false),
+                update: jest.fn().mockResolvedValue(undefined),
+            },
+        } as unknown as vscode.ExtensionContext;
+
+        await promptForDetectedAIExtension(context);
+
+        expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+        expect(configUpdate).not.toHaveBeenCalled();
+        expect(context.globalState.update).toHaveBeenCalledWith('runql.ai.detectedExtensionPromptIgnored.v1', true);
     });
 });
