@@ -103,7 +103,7 @@ export async function generateDescriptionsWithAI(context: vscode.ExtensionContex
         return;
     }
 
-    vscode.window.withProgress({
+    return vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: "Generating AI Descriptions",
         cancellable: true

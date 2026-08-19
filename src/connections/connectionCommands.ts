@@ -9,6 +9,7 @@ import {
 import { getAdapter } from './adapterFactory';
 import { ConnectionItem } from './connectionsView';
 import { saveSchema } from '../schema/schemaStore';
+import { enqueueFromIntrospectionResult } from '../schema/schemaDocumentationReminder';
 import { ConnectionFormView } from '../ui/connectionFormView';
 import * as path from 'path';
 import { defaultExportTable } from './exportHelper';
@@ -197,24 +198,18 @@ export async function performIntrospection(profile: ConnectionProfile, silent = 
                 'Please provide connection credentials'
             ));
         }
-        // If silent and no secrets, we might fail downstream, but usually silent is for auto-refresh where we don't want to prompt.
-        // If silent, we typically skip prompting. But ensureConnectionSecrets prompts.
-        // We should arguably NOT prompt if silent is true?
-        // But if the user triggered it, they expect it. If it's auto-refresh, maybe not.
-        // Let's rely on ensureConnectionSecrets for now. If it prompts during auto-refresh that's bad.
-        // Refactoring ensureConnectionSecrets to support 'silent' or handle it here?
-        // Actually, if silent is true (auto-refresh), we should just try getting secrets without prompting.
 
         let finalSecrets = secrets;
         if (silent) {
             finalSecrets = await getConnectionSecrets(profile.id);
         }
-        if (!finalSecrets) return;
+        if (!finalSecrets) return undefined;
 
         const adapter = getAdapter(profile.dialect);
         const schema = await adapter.introspectSchema(profile, finalSecrets);
         await saveSchema(schema);
         vscode.commands.executeCommand('runql.view.refreshSchemas', true);
+        return schema;
     };
 
     if (silent) {
@@ -234,8 +229,11 @@ export async function performIntrospection(profile: ConnectionProfile, silent = 
             cancellable: false
         }, async () => {
             try {
-                await doIntrospect();
+                const schema = await doIntrospect();
                 vscode.window.showInformationMessage(`Introspection complete for ${profile.name}`);
+                if (schema && schema.schemas.length > 0) {
+                    await enqueueFromIntrospectionResult(schema);
+                }
             } catch (e: unknown) {
                 await ErrorHandler.handle(e, {
                     severity: ErrorSeverity.Error,

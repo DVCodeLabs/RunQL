@@ -170,9 +170,9 @@ export class ConnectionFormView {
                             vscode.window.showInformationMessage(`Connection '${profile.name}' saved.`);
 
                             vscode.commands.executeCommand('runql.view.refreshConnections');
-                            performIntrospection(profile, true);
-
                             this.dispose();
+
+                            performIntrospection(profile);
                         } catch (e: unknown) {
                             Logger.warn('Save failed:', e);
                             const errMsg = e instanceof Error ? e.message : 'Save failed.';

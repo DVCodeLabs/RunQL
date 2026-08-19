@@ -38,5 +38,27 @@ export async function loadDescriptions(connectionId: string, connectionName?: st
 export async function saveDescriptions(connectionId: string, connectionName: string | undefined, data: SchemaDescriptionsFile, schemaName = data.schemaName || 'main'): Promise<void> {
     const dpDir = await ensureDPDirs();
     const uri = await getDescriptionUriForConnection(dpDir, connectionId, connectionName, schemaName);
-    await writeJson(uri, data);
+
+    let existing: Record<string, unknown> | null = null;
+    try {
+        existing = await readJson<Record<string, unknown>>(uri);
+    } catch (_e) {
+        // File may not exist yet
+    }
+
+    let merged: Record<string, unknown> = { ...data };
+    if (existing) {
+        const knownKeys = new Set<string>([
+            '__runqlHeader', 'version', 'generatedAt', 'connectionId',
+            'connectionName', 'dialect', 'schemaName', 'schemaDescription',
+            'tables', 'columns',
+        ]);
+        for (const key of Object.keys(existing)) {
+            if (!knownKeys.has(key) && !(key in merged)) {
+                merged[key] = existing[key];
+            }
+        }
+    }
+
+    await writeJson(uri, merged);
 }

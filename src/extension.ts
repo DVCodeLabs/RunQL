@@ -3180,7 +3180,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       const { openSchemaErdCommand } = require('./erd/openSchemaCommand');
       await openSchemaErdCommand(context, item);
     }),
-    vscode.commands.registerCommand("runql.schema.generateDescriptionsWithAI", async (item: ExplorerItem) => {
+    vscode.commands.registerCommand("runql.schema.generateDescriptionsWithAI", async (item?: ExplorerItem | { introspection?: unknown; schemaModel?: unknown }) => {
       const { generateDescriptionsWithAI } = require('./schema/descriptionGenerator');
       await generateDescriptionsWithAI(context, item);
     })
@@ -3229,6 +3229,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
       memoryRecallProvider.refresh();
     })
   );
+
+  // Scan existing schemas for undocumented schema reminders (fire-and-forget)
+  if (projectInitializedAtStartup) {
+    import('./schema/schemaDocumentationReminder').then(m => m.scanExistingSchemas()).catch(e => {
+      Logger.warn('Schema documentation reminder activation scan failed', e);
+    });
+  }
 
   return {
     registerProvider: (descriptor) => ProviderRegistry.getInstance().registerProvider(descriptor),

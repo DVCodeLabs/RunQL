@@ -324,3 +324,9 @@ Environment tag indicators in the SQL file editor, RunQL Explorer, add new conne
 ### Changes
 
 Bumping the version for the RunQL-IDE build process which fixes a Windows client update issue.
+
+## [1.17.3]
+
+### Changes
+
+Make AI-generated schema documentation more integrated into your workflows and make the feature more obvious overall.
