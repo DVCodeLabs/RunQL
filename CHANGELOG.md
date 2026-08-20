@@ -343,3 +343,9 @@ Better integration with Claude Code and Codex!  Click the button and the prompt 
 
 Better integration with Claude Code and Codex!  Click the button and the prompt will be given to Claude Code or Codex (depending on what you have configured).  We now use the chatgpt.implementTodo for Codex now, so no more copy/paste required!
 Auto-detection of Claude Code/Codex and give you the option to one-click setup RunQL for use with your preferred AI.
+
+## [1.17.6]
+
+### Changes
+
+Fixed the issue where deleting a saved query did not remove the companion md file and therefore did not clean the query index or refresh the Saved Queries panel.

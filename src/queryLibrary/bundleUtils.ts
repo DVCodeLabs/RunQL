@@ -13,12 +13,19 @@ export function stripSuffix(path: string, suffix: string) {
     return path.toLowerCase().endsWith(suffix) ? path.slice(0, -suffix.length) : path;
 }
 
+export function stripQuerySourceSuffix(path: string) {
+    const lower = path.toLowerCase();
+    if (lower.endsWith(".sql")) return path.slice(0, -4);
+    if (lower.endsWith(".postgres")) return path.slice(0, -9);
+    return path;
+}
+
 export function withPath(uri: vscode.Uri, newPath: string) {
     return uri.with({ path: newPath });
 }
 
 export function siblingUri(sqlUri: vscode.Uri, newExt: string): vscode.Uri {
-    const base = stripSuffix(sqlUri.path, ".sql");
+    const base = stripQuerySourceSuffix(sqlUri.path);
     return withPath(sqlUri, base + newExt);
 }
 
@@ -71,7 +78,7 @@ export async function patchMdFrontmatter(uri: vscode.Uri, newSqlRelPath: string)
 
 export function isCanonicalSql(uri: vscode.Uri): boolean {
     const p = uri.path.toLowerCase();
-    if (!p.endsWith(".sql")) return false;
+    if (!p.endsWith(".sql") && !p.endsWith(".postgres")) return false;
     // exclude derived
     if (p.endsWith(".annotated.sql") || p.endsWith(".commented.sql")) return false;
     return true;

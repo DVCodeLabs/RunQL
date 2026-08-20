@@ -2,7 +2,28 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { SavedQueryItem } from './savedQueriesView';
 import { ErrorHandler, ErrorSeverity, formatQueryError } from '../core/errorHandler';
+import { Logger } from '../core/logger';
 import { resolveStoredPathToExistingFile } from '../core/storageRoot';
+import { queryIndex } from './queryIndex';
+import { siblingUri, stripQuerySourceSuffix, withPath } from './bundleUtils';
+
+function isFileNotFound(error: unknown): boolean {
+    const code = typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code)
+        : '';
+    const message = error instanceof Error ? error.message : String(error);
+    return code === 'FileNotFound' || /\bENOENT\b|no such file or directory/i.test(message);
+}
+
+async function deleteIfPresent(uri: vscode.Uri, useTrash = true): Promise<boolean> {
+    try {
+        await vscode.workspace.fs.delete(uri, { recursive: false, useTrash });
+        return true;
+    } catch (error) {
+        if (isFileNotFound(error)) return false;
+        throw error;
+    }
+}
 
 export async function deleteSavedQuery(item: SavedQueryItem | vscode.Uri) {
     if (!item) return;
@@ -13,48 +34,60 @@ export async function deleteSavedQuery(item: SavedQueryItem | vscode.Uri) {
     // Handle both SavedQueryItem (from sidebar) and Uri (from codelens)
     if (item instanceof vscode.Uri) {
         fileUri = item;
-        displayLabel = path.basename(item.fsPath, '.sql');
+        displayLabel = path.basename(stripQuerySourceSuffix(item.fsPath));
     } else if (item.entry) {
         // In multi-root workspaces the syntactic resolver picks
         // folder[0] blindly. Probe every folder for the actual file so
         // we don't delete the wrong workspace-folder's copy.
         fileUri = await resolveStoredPathToExistingFile(item.entry.path);
-        displayLabel = (item.label as string) || path.basename(item.entry.path, '.sql');
+        displayLabel = (item.label as string) || path.basename(stripQuerySourceSuffix(item.entry.path));
     } else {
         return;
     }
 
     if (!fileUri) return;
 
-    // 1. Confirm
+    const companionUris = [
+        siblingUri(fileUri, ".md"),
+        siblingUri(fileUri, ".comments.json"),
+        siblingUri(fileUri, ".chart.json"),
+        siblingUri(fileUri, ".chartconfig.json"),
+        withPath(fileUri, stripQuerySourceSuffix(fileUri.path) + ".annotated.sql")
+    ];
+
     const choice = await vscode.window.showWarningMessage(
-        `Are you sure you want to delete '${displayLabel}' and its source file? This cannot be undone.`,
+        `Are you sure you want to move '${displayLabel}' and its source and companion files to the Trash?`,
         { modal: true },
         'Delete'
     );
 
     if (choice !== 'Delete') return;
 
-    // 2. Delete File
     try {
-        await vscode.workspace.fs.delete(fileUri, { recursive: false, useTrash: true });
+        await deleteIfPresent(fileUri);
 
-        // Note: The file watcher in queryIndex.ts and deleteBundleWatcher.ts will handle:
-        // - Updating the index (removing the entry)
-        // - Deleting sibling files (.md, .json, etc)
+        const failedCompanions: string[] = [];
+        for (const companion of companionUris) {
+            try {
+                await deleteIfPresent(companion);
+            } catch (error) {
+                failedCompanions.push(path.basename(companion.fsPath));
+                Logger.warn(`Failed to delete query companion ${companion.fsPath}`, error);
+            }
+        }
 
-        // We can optionally trigger a refresh of the view, but the watcher should trigger it via onDidChangeTreeData if wired up.
-        // SavedQueriesViewProvider listens? 
-        // In extension.ts: context.subscriptions.push(watchers) -> () => savedQueriesProvider.refresh()
-        // So it should auto-refresh.
+        await queryIndex.removeFile(fileUri);
+        await vscode.commands.executeCommand('runql.view.refreshSavedQueries');
+
+        if (failedCompanions.length > 0) {
+            vscode.window.showWarningMessage(`Deleted query '${displayLabel}', but could not delete companion files: ${failedCompanions.join(', ')}`);
+            return;
+        }
 
         vscode.window.showInformationMessage(`Deleted query '${displayLabel}'`);
 
     } catch (e: unknown) {
-        // If file not found, it might already be deleted, so we should just ensure index is clean?
-        // But let's show error if it's a real FS error.
-        const isFileNotFound = e instanceof vscode.FileSystemError && e.code === 'FileNotFound';
-        if (!isFileNotFound) {
+        if (!isFileNotFound(e)) {
             await ErrorHandler.handle(e, {
                 severity: ErrorSeverity.Error,
                 userMessage: formatQueryError(
@@ -65,8 +98,8 @@ export async function deleteSavedQuery(item: SavedQueryItem | vscode.Uri) {
                 context: 'Delete Saved Query'
             });
         } else {
-            // Force refresh if file was already gone
-            vscode.commands.executeCommand('runql.view.refreshSavedQueries');
+            await queryIndex.removeFile(fileUri);
+            await vscode.commands.executeCommand('runql.view.refreshSavedQueries');
         }
     }
 }

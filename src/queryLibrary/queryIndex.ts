@@ -12,6 +12,7 @@ import {
 import { QueryIndexEntry, QueryIndexFile } from './queryIndexer';
 import { parseMdMetadata, buildSearchText } from './mdParser';
 import { Logger } from '../core/logger';
+import { stripQuerySourceSuffix } from './bundleUtils';
 
 /**
  * Canonical map key for a URI: storage-root-relative when under the
@@ -33,6 +34,12 @@ export class QueryIndex {
 
     private initialized = false;
     private persistencePending = false;
+    private persistenceTimer: ReturnType<typeof setTimeout> | undefined;
+    private persistencePromise: Promise<void> | undefined;
+    private resolvePersistencePromise: (() => void) | undefined;
+    private persistenceFlushing = false;
+    private persistenceRerunRequested = false;
+    private pendingCheckMemorySources = false;
     private storageRootWatchers: vscode.Disposable | undefined;
     private storageRootSubscription: vscode.Disposable | undefined;
 
@@ -64,7 +71,7 @@ export class QueryIndex {
         const watcher = vscode.workspace.createFileSystemWatcher('**/*.{sql,postgres}');
         watcher.onDidChange(uri => { this.updateFile(uri); });
         watcher.onDidCreate(uri => { this.updateFile(uri); });
-        watcher.onDidDelete(uri => { this.removeFile(uri); });
+        watcher.onDidDelete(uri => { void this.removeFile(uri); });
 
         const mdWatcher = vscode.workspace.createFileSystemWatcher('**/*.md');
         mdWatcher.onDidChange(uri => { this.handleMdChange(uri); });
@@ -123,7 +130,7 @@ export class QueryIndex {
         subs.push(sqlWatcher);
         subs.push(sqlWatcher.onDidChange((u) => { this.updateFile(u); }));
         subs.push(sqlWatcher.onDidCreate((u) => { this.updateFile(u); }));
-        subs.push(sqlWatcher.onDidDelete((u) => { this.removeFile(u); }));
+        subs.push(sqlWatcher.onDidDelete((u) => { void this.removeFile(u); }));
         const mdPattern = new vscode.RelativePattern(uri, 'queries/**/*.md');
         const mdWatcher = vscode.workspace.createFileSystemWatcher(mdPattern);
         subs.push(mdWatcher);
@@ -189,94 +196,179 @@ export class QueryIndex {
         }
     }
 
-    private async persist() {
-        if (this.persistencePending) return;
+    private beginPersistence(): Promise<void> {
+        if (!this.persistencePromise) {
+            this.persistencePromise = new Promise((resolve) => {
+                this.resolvePersistencePromise = resolve;
+            });
+        }
+        return this.persistencePromise;
+    }
+
+    private finishPersistence(): void {
+        this.persistencePending = false;
+        const resolve = this.resolvePersistencePromise;
+        this.persistencePromise = undefined;
+        this.resolvePersistencePromise = undefined;
+        resolve?.();
+    }
+
+    private async sourceFileExists(entry: QueryIndexEntry, cache?: Map<string, boolean>): Promise<boolean> {
+        if (cache?.has(entry.path)) return cache.get(entry.path) ?? false;
+        const uri = resolveStoredPath(entry.path);
+        const exists = Boolean(uri && await fileExists(uri));
+        cache?.set(entry.path, exists);
+        return exists;
+    }
+
+    private async filterExistingSources(entries: QueryIndexEntry[], cache: Map<string, boolean>): Promise<QueryIndexEntry[]> {
+        const checked = await Promise.all(entries.map(async (entry) => ({
+            entry,
+            exists: await this.sourceFileExists(entry, cache)
+        })));
+        return checked.filter(({ exists }) => exists).map(({ entry }) => entry);
+    }
+
+    private async persist(options: { debounce?: boolean; checkMemorySources?: boolean } = {}): Promise<void> {
+        const debounce = options.debounce !== false;
+        const promise = this.beginPersistence();
         this.persistencePending = true;
+        this.pendingCheckMemorySources ||= options.checkMemorySources !== false;
 
-        // Debounce slightly
-        setTimeout(async () => {
-            try {
-                const dpDir = await ensureDPDirs();
-                const indexUri = vscode.Uri.joinPath(dpDir, "system", "queries", "queryIndex.json");
+        if (this.persistenceTimer) {
+            clearTimeout(this.persistenceTimer);
+            this.persistenceTimer = undefined;
+        }
 
-                // Reload the latest queryIndex.json from disk and merge
-                // with our in-memory state so a concurrent write from
-                // another VS Code window (sharing the same user/custom
-                // storage root) doesn't get clobbered. Union by
-                // storage-root-relative path; on collision keep the
-                // record with the newer `updatedAt`.
-                let onDisk: QueryIndexEntry[] = [];
-                if (await fileExists(indexUri)) {
-                    try {
-                        const data = await readJson<QueryIndexFile>(indexUri);
-                        onDisk = data?.queries ?? [];
-                    } catch {
-                        onDisk = [];
-                    }
+        if (this.persistenceFlushing) {
+            this.persistenceRerunRequested = true;
+            return promise;
+        }
+
+        if (debounce) {
+            this.persistenceTimer = setTimeout(() => {
+                this.persistenceTimer = undefined;
+                void this.flushPersistence();
+            }, 500);
+            return promise;
+        }
+
+        void this.flushPersistence();
+        return promise;
+    }
+
+    private async flushPersistence(): Promise<void> {
+        if (this.persistenceFlushing) {
+            this.persistenceRerunRequested = true;
+            return;
+        }
+
+        this.persistenceFlushing = true;
+        try {
+            do {
+                this.persistenceRerunRequested = false;
+                const checkMemorySources = this.pendingCheckMemorySources;
+                this.pendingCheckMemorySources = false;
+                await this.persistNow({ checkMemorySources });
+            } while (this.persistenceRerunRequested || this.pendingCheckMemorySources);
+        } finally {
+            this.persistenceFlushing = false;
+            this.finishPersistence();
+        }
+    }
+
+    private async persistNow(options: { checkMemorySources: boolean }): Promise<void> {
+        try {
+            const sourceExistsCache = new Map<string, boolean>();
+            const dpDir = await ensureDPDirs();
+            const indexUri = vscode.Uri.joinPath(dpDir, "system", "queries", "queryIndex.json");
+
+            // Reload the latest queryIndex.json from disk and merge
+            // with our in-memory state so a concurrent write from
+            // another VS Code window (sharing the same user/custom
+            // storage root) doesn't get clobbered. Union by
+            // storage-root-relative path; on collision keep the
+            // record with the newer `updatedAt`.
+            let onDisk: QueryIndexEntry[] = [];
+            if (await fileExists(indexUri)) {
+                try {
+                    const data = await readJson<QueryIndexFile>(indexUri);
+                    onDisk = data?.queries ?? [];
+                } catch {
+                    onDisk = [];
                 }
-                const byPath = new Map<string, QueryIndexEntry>();
-                for (const e of onDisk) {
-                    if (!e || !e.path) continue;
-                    e.path = normalizeStoredPath(e.path);
-                    if (e.docPath) e.docPath = normalizeStoredPath(e.docPath);
+            }
+            const byPath = new Map<string, QueryIndexEntry>();
+            const normalizedOnDisk = onDisk.filter((e) => e?.path).map((e) => {
+                e.path = normalizeStoredPath(e.path);
+                if (e.docPath) e.docPath = normalizeStoredPath(e.docPath);
+                return e;
+            });
+            for (const e of await this.filterExistingSources(normalizedOnDisk, sourceExistsCache)) {
+                byPath.set(e.path, e);
+            }
+
+            const memoryEntries = Array.from(this.pathIndex.values()).filter((e) => e?.path);
+            const existingMemoryEntries = options.checkMemorySources
+                ? new Set(await this.filterExistingSources(memoryEntries, sourceExistsCache))
+                : new Set(memoryEntries);
+            for (const e of memoryEntries) {
+                if (!e || !e.path) continue;
+                if (!existingMemoryEntries.has(e)) {
+                    this.pathIndex.delete(e.path);
+                    continue;
+                }
+                const existing = byPath.get(e.path);
+                if (!existing) {
+                    byPath.set(e.path, e);
+                    continue;
+                }
+                // Same path in both: prefer the record with the
+                // later `updatedAt`. Fall back to our in-memory
+                // record if timestamps are equal or unparseable.
+                const ourTs = Date.parse(e.updatedAt ?? '');
+                const diskTs = Date.parse(existing.updatedAt ?? '');
+                if (Number.isFinite(diskTs) && Number.isFinite(ourTs) && diskTs > ourTs) {
+                    byPath.set(e.path, existing);
+                } else {
                     byPath.set(e.path, e);
                 }
-                for (const e of this.pathIndex.values()) {
-                    if (!e || !e.path) continue;
-                    const existing = byPath.get(e.path);
-                    if (!existing) {
-                        byPath.set(e.path, e);
-                        continue;
-                    }
-                    // Same path in both: prefer the record with the
-                    // later `updatedAt`. Fall back to our in-memory
-                    // record if timestamps are equal or unparseable.
-                    const ourTs = Date.parse(e.updatedAt ?? '');
-                    const diskTs = Date.parse(existing.updatedAt ?? '');
-                    if (Number.isFinite(diskTs) && Number.isFinite(ourTs) && diskTs > ourTs) {
-                        byPath.set(e.path, existing);
-                    } else {
-                        byPath.set(e.path, e);
-                    }
-                }
-
-                const entries = Array.from(byPath.values())
-                    .sort((a, b) => a.path.localeCompare(b.path))
-                    .map(e => ({
-                        connectionId: e.connectionId,
-                        connectionName: e.connectionName,
-                        createdAt: e.createdAt,
-                        dialect: e.dialect,
-                        docPath: e.docPath,
-                        lastRunAt: e.lastRunAt,
-                        mdBodyText: e.mdBodyText,
-                        mdSummary: e.mdSummary,
-                        mdTags: e.mdTags,
-                        mdTitle: e.mdTitle,
-                        path: e.path,
-                        catalogContext: e.catalogContext,
-                        searchText: e.searchText,
-                        searchUpdatedAt: e.searchUpdatedAt,
-                        schemaContext: e.schemaContext,
-                        sqlHash: e.sqlHash,
-                        title: e.title,
-                        updatedAt: e.updatedAt
-                    }));
-
-                const file: QueryIndexFile = {
-                    version: "0.1",
-                    generatedAt: new Date().toISOString(),
-                    queries: entries
-                };
-
-                await writeJson(indexUri, file);
-                this.persistencePending = false;
-                this._onDidChange.fire();
-            } catch (e) {
-                Logger.error("[QueryIndex] Failed to save queryIndex.json", e);
-                this.persistencePending = false;
             }
-        }, 500);
+
+            const entries = Array.from(byPath.values())
+                .sort((a, b) => a.path.localeCompare(b.path))
+                .map(e => ({
+                    connectionId: e.connectionId,
+                    connectionName: e.connectionName,
+                    createdAt: e.createdAt,
+                    dialect: e.dialect,
+                    docPath: e.docPath,
+                    lastRunAt: e.lastRunAt,
+                    mdBodyText: e.mdBodyText,
+                    mdSummary: e.mdSummary,
+                    mdTags: e.mdTags,
+                    mdTitle: e.mdTitle,
+                    path: e.path,
+                    catalogContext: e.catalogContext,
+                    searchText: e.searchText,
+                    searchUpdatedAt: e.searchUpdatedAt,
+                    schemaContext: e.schemaContext,
+                    sqlHash: e.sqlHash,
+                    title: e.title,
+                    updatedAt: e.updatedAt
+                }));
+
+            const file: QueryIndexFile = {
+                version: "0.1",
+                generatedAt: new Date().toISOString(),
+                queries: entries
+            };
+
+            await writeJson(indexUri, file);
+            this._onDidChange.fire();
+        } catch (e) {
+            Logger.error("[QueryIndex] Failed to save queryIndex.json", e);
+        }
     }
 
     private isTracked(uri: vscode.Uri): boolean {
@@ -297,13 +389,11 @@ export class QueryIndex {
             const wsRelative = keyForUri(uri);
             const title = this.extractTitle(text);
 
-
-
             // Check for companion md and extract search metadata
             let docPath: string | undefined;
             let mdMeta: ReturnType<typeof parseMdMetadata> | undefined;
             try {
-                const mdUri = uri.with({ path: uri.path.replace(/\.sql$/i, '.md') });
+                const mdUri = uri.with({ path: stripQuerySourceSuffix(uri.path) + '.md' });
                 try {
                     await vscode.workspace.fs.stat(mdUri);
                     docPath = keyForUri(mdUri);
@@ -390,19 +480,30 @@ export class QueryIndex {
         }
     }
 
+    private findEntryForMd(mdUri: vscode.Uri): { entry: QueryIndexEntry; sqlUri: vscode.Uri } | undefined {
+        const sqlUri = mdUri.with({ path: mdUri.path.replace(/\.md$/i, '.sql') });
+        let entry = this.pathIndex.get(keyForUri(sqlUri));
+        if (entry) return { entry, sqlUri };
+
+        const postgresUri = mdUri.with({ path: mdUri.path.replace(/\.md$/i, '.postgres') });
+        entry = this.pathIndex.get(keyForUri(postgresUri));
+        if (entry) return { entry, sqlUri: postgresUri };
+
+        const mdRel = keyForUri(mdUri);
+        entry = Array.from(this.pathIndex.values()).find((candidate) => candidate.docPath === mdRel);
+        if (!entry) return undefined;
+
+        return { entry, sqlUri: resolveStoredPath(entry.path) ?? sqlUri };
+    }
+
     /**
      * Handle companion markdown file change — find associated SQL entry and update search fields.
      */
     private async handleMdChange(mdUri: vscode.Uri) {
         if (mdUri.scheme !== 'file') return;
-        // Find the associated SQL file path
-        const sqlPath = mdUri.path.replace(/\.md$/i, '.sql');
-        const sqlUri = mdUri.with({ path: sqlPath });
-
-        // Check if we track a SQL file with this companion
-        const wsRelative = keyForUri(sqlUri);
-        const entry = this.pathIndex.get(wsRelative);
-        if (!entry) return;
+        const match = this.findEntryForMd(mdUri);
+        if (!match) return;
+        const { entry, sqlUri } = match;
 
         // Re-parse the markdown and update entry
         try {
@@ -451,12 +552,9 @@ export class QueryIndex {
      */
     private handleMdDelete(mdUri: vscode.Uri) {
         if (mdUri.scheme !== 'file') return;
-        const sqlPath = mdUri.path.replace(/\.md$/i, '.sql');
-        const sqlUri = mdUri.with({ path: sqlPath });
-
-        const wsRelative = keyForUri(sqlUri);
-        const entry = this.pathIndex.get(wsRelative);
-        if (!entry) return;
+        const match = this.findEntryForMd(mdUri);
+        if (!match) return;
+        const { entry } = match;
 
         entry.docPath = undefined;
         entry.mdTitle = undefined;
@@ -495,21 +593,19 @@ export class QueryIndex {
 
         // If new extension is not supported, treat as deletion
         if (!newRel.endsWith('.sql') && !newRel.endsWith('.postgres')) {
-            this.removeFile(oldUri);
+            await this.removeFile(oldUri);
             return;
         }
-
-
 
         const entry = this.pathIndex.get(oldRel);
         if (entry) {
             // Update path
             entry.path = newRel;
             if (entry.docPath) {
-                const oldMd = oldRel.replace(/\.sql$/i, '.md');
+                const oldMd = stripQuerySourceSuffix(oldRel) + '.md';
                 // Only update docPath if it matched the old pattern
                 if (entry.docPath === oldMd) {
-                    entry.docPath = newRel.replace(/\.sql$/i, '.md');
+                    entry.docPath = stripQuerySourceSuffix(newRel) + '.md';
                 }
             }
             entry.updatedAt = new Date().toISOString();
@@ -569,12 +665,13 @@ export class QueryIndex {
         }
     }
 
-    removeFile(uri: vscode.Uri) {
+    async removeFile(uri: vscode.Uri): Promise<void> {
         const wsRelative = keyForUri(uri);
         if (this.pathIndex.delete(wsRelative)) {
             this.rebuildHashIndex();
-            this.persist();
         }
+        // Always persist: the entry may still exist on disk from another window even if absent from pathIndex.
+        await this.persist({ debounce: false, checkMemorySources: false });
     }
 
     // Updates metadata when connection changes
