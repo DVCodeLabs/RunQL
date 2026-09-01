@@ -349,3 +349,9 @@ Auto-detection of Claude Code/Codex and give you the option to one-click setup R
 ### Changes
 
 Fixed the issue where deleting a saved query did not remove the companion md file and therefore did not clean the query index or refresh the Saved Queries panel.
+
+## [1.17.7]
+
+### Changes
+
+Fix for visibility of pagination icons.
