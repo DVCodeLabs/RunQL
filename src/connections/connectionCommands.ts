@@ -16,6 +16,7 @@ import { defaultExportTable } from './exportHelper';
 import { formatDatabaseConnectionError } from './connectionErrors';
 import { Logger } from '../core/logger';
 import { ErrorHandler, ErrorSeverity, formatConnectionError, formatGeneralError } from '../core/errorHandler';
+import { withTimeout } from '../core/utils';
 import { ProviderRegistry } from './providerRegistry';
 import { generateBackupSql, BackupTableInfo, BackupViewInfo, BackupRoutineInfo } from '../core/backupSchemaSql';
 import { quoteIdentifier, resolveEffectiveSqlDialect } from '../core/sqlUtils';
@@ -98,7 +99,11 @@ async function testConnectionCommand(item?: ConnectionItem) {
 async function testConnectionInternal(profile: ConnectionProfile, secrets: ConnectionSecrets) {
     try {
         const adapter = getAdapter(profile.dialect);
-        await adapter.testConnection(profile, secrets);
+        await withTimeout(
+            adapter.testConnection(profile, secrets),
+            30000,
+            'Connection test timed out. Check the host, port, and network connectivity.'
+        );
         await vscode.window.showInformationMessage(`Connected to '${profile.name}' successfully!`, { modal: true });
     } catch (e: unknown) {
         const errorMessage = formatConnectionError(

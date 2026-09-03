@@ -40,7 +40,10 @@ export function openSshTunnel(
         }
 
         const dbHost = profile.host || 'localhost';
-        const dbPort = profile.port || 5432;
+        const dbPort = profile.port;
+        if (!dbPort) {
+            return reject(createSshError('SSH_VALIDATION', 'Database port is required for SSH tunneling.'));
+        }
 
         const sshConfig: ConnectConfig = {
             host: profile.sshHost,
@@ -87,13 +90,24 @@ export function openSshTunnel(
 
         const sshClient = new SSHClient();
 
+        let forwardTimeout: ReturnType<typeof setTimeout> | undefined;
+
         sshClient.on('ready', () => {
+            forwardTimeout = setTimeout(() => {
+                sshClient.end();
+                reject(createSshError(
+                    'SSH_TUNNEL_FAILED',
+                    `SSH port forwarding to ${dbHost}:${dbPort} timed out. Check that the database host is reachable from the SSH server.`
+                ));
+            }, 15000);
+
             sshClient.forwardOut(
                 'localhost',
                 0,
                 dbHost,
                 dbPort,
                 (err, stream) => {
+                    clearTimeout(forwardTimeout);
                     if (err) {
                         sshClient.end();
                         return reject(createSshError(
@@ -102,6 +116,7 @@ export function openSshTunnel(
                         ));
                     }
 
+                    decorateStreamForDriverCompat(stream);
                     resolve({
                         stream,
                         close: () => {
@@ -114,6 +129,7 @@ export function openSshTunnel(
         });
 
         sshClient.on('error', (err) => {
+            clearTimeout(forwardTimeout);
             const message = err.message || String(err);
 
             if (message.includes('Authentication') || message.includes('auth')) {
@@ -126,12 +142,35 @@ export function openSshTunnel(
         });
 
         sshClient.on('timeout', () => {
+            clearTimeout(forwardTimeout);
             sshClient.end();
             reject(createSshError('SSH_TIMEOUT', 'SSH connection timed out. Check SSH host and port.'));
         });
 
         sshClient.connect(sshConfig);
     });
+}
+
+/**
+ * Patch an ssh2 Channel with the net.Socket-compatible methods that database
+ * drivers (pg, tedious, etc.) expect.  The Channel is a Duplex stream that
+ * lacks setNoDelay, setKeepAlive, ref, unref and connect.  Without these
+ * stubs, pg's Connection.connect() throws a TypeError before it can register
+ * its event listeners, which causes client.end() to hang forever.
+ *
+ * The connect stub emits 'connect' on the next tick so drivers that wait for
+ * that event (pg) proceed with their protocol handshake.
+ */
+function decorateStreamForDriverCompat(stream: Duplex): void {
+    const s = stream as Duplex & Record<string, unknown>;
+    const noop = () => {};
+    if (typeof s.setNoDelay !== 'function') s.setNoDelay = noop;
+    if (typeof s.setKeepAlive !== 'function') s.setKeepAlive = noop;
+    if (typeof s.ref !== 'function') s.ref = noop;
+    if (typeof s.unref !== 'function') s.unref = noop;
+    if (typeof s.connect !== 'function') {
+        s.connect = () => { process.nextTick(() => stream.emit('connect')); };
+    }
 }
 
 /**

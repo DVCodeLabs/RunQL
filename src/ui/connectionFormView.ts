@@ -8,6 +8,9 @@ import { formatDatabaseConnectionError } from '../connections/connectionErrors';
 import { buildReuseDraft, getCompatibleSources, isReuseEnabled } from '../connections/connectionReuse';
 import { Logger } from '../core/logger';
 import { ConnectionProfile, ConnectionSecrets, DPConnectionFieldPicker } from '../core/types';
+import { withTimeout } from '../core/utils';
+
+const TEST_CONNECTION_TIMEOUT_MS = 30000;
 
 interface PickFieldMessage {
     command: 'pickFieldValue';
@@ -39,14 +42,16 @@ interface FormWebviewMessage {
 }
 
 export class ConnectionFormView {
-    public static currentPanel: ConnectionFormView | undefined;
+    private static panels = new Map<string, ConnectionFormView>();
     private readonly _panel: vscode.WebviewPanel;
     private readonly _extensionUri: vscode.Uri;
+    private readonly _panelKey: string;
     private _disposables: vscode.Disposable[] = [];
 
-    private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, profile?: ConnectionProfile, secrets?: ConnectionSecrets) {
+    private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, panelKey: string, profile?: ConnectionProfile, secrets?: ConnectionSecrets) {
         this._panel = panel;
         this._extensionUri = extensionUri;
+        this._panelKey = panelKey;
 
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
         this._panel.webview.html = this._getWebviewContent(this._panel.webview, extensionUri);
@@ -54,8 +59,12 @@ export class ConnectionFormView {
     }
 
     public static render(extensionUri: vscode.Uri, profile?: ConnectionProfile, secrets?: ConnectionSecrets) {
-        if (ConnectionFormView.currentPanel) {
-            ConnectionFormView.currentPanel.dispose();
+        const panelKey = profile?.id ?? `new-${crypto.randomUUID()}`;
+
+        const existing = ConnectionFormView.panels.get(panelKey);
+        if (existing) {
+            existing._panel.reveal();
+            return;
         }
 
         const title = profile ? `Edit: ${profile.name}` : "Add DB Connection";
@@ -64,11 +73,11 @@ export class ConnectionFormView {
             retainContextWhenHidden: true,
             localResourceRoots: [vscode.Uri.joinPath(extensionUri, "dist")]
         });
-        ConnectionFormView.currentPanel = new ConnectionFormView(panel, extensionUri, profile, secrets);
+        ConnectionFormView.panels.set(panelKey, new ConnectionFormView(panel, extensionUri, panelKey, profile, secrets));
     }
 
     public dispose() {
-        ConnectionFormView.currentPanel = undefined;
+        ConnectionFormView.panels.delete(this._panelKey);
         this._panel.dispose();
         while (this._disposables.length) {
             const x = this._disposables.pop();
@@ -109,7 +118,11 @@ export class ConnectionFormView {
                         try {
                             if (!message.profile) break;
                             const adapter = getAdapter(message.profile.dialect);
-                            await adapter.testConnection(message.profile, message.secrets ?? {});
+                            await withTimeout(
+                                adapter.testConnection(message.profile, message.secrets ?? {}),
+                                TEST_CONNECTION_TIMEOUT_MS,
+                                'Connection test timed out. Check the host, port, and network connectivity.'
+                            );
                             webview.postMessage({ command: 'testResult', success: true, message: 'Connection successful!' });
                         } catch (e: unknown) {
                             Logger.warn('Connection test failed:', e);
@@ -144,7 +157,11 @@ export class ConnectionFormView {
                                 const testProfile = profile.dialect === 'duckdb'
                                     ? { ...profile, _runqlAllowCreateOnTest: true }
                                     : profile;
-                                await adapter.testConnection(testProfile, secrets);
+                                await withTimeout(
+                                    adapter.testConnection(testProfile, secrets),
+                                    TEST_CONNECTION_TIMEOUT_MS,
+                                    'Connection test timed out. Check the host, port, and network connectivity.'
+                                );
                             } catch (e: unknown) {
                                 Logger.warn('Connection test before save failed:', e);
                                 webview.postMessage({

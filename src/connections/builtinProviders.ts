@@ -1,29 +1,4 @@
-import { DPConnectionFieldSchema, DPProviderDescriptor } from '../core/types';
-
-const SSH_TUNNEL_FIELDS: DPConnectionFieldSchema[] = [
-    { key: 'sshEnabled', label: 'Enable SSH Tunnel', type: 'checkbox', tab: 'ssh', storage: 'profile', defaultValue: false, width: 'full' },
-    { key: 'sshHost', label: 'SSH Host', type: 'text', tab: 'ssh', storage: 'profile', required: true, placeholder: 'bastion.example.com', width: 'half', visibleWhen: { storage: 'profile', key: 'sshEnabled', truthy: true } },
-    { key: 'sshPort', label: 'SSH Port', type: 'number', tab: 'ssh', storage: 'profile', required: true, defaultValue: 22, min: 1, max: 65535, width: 'half', visibleWhen: { storage: 'profile', key: 'sshEnabled', truthy: true } },
-    { key: 'sshUsername', label: 'SSH Username', type: 'text', tab: 'ssh', storage: 'profile', required: true, width: 'full', visibleWhen: { storage: 'profile', key: 'sshEnabled', truthy: true } },
-    {
-        key: 'sshAuthMethod', label: 'SSH Auth Method', type: 'select', tab: 'ssh', storage: 'profile', required: true, defaultValue: 'password', width: 'full',
-        options: [
-            { value: 'password', label: 'Password' },
-            { value: 'privateKey', label: 'Private Key' }
-        ],
-        visibleWhen: { storage: 'profile', key: 'sshEnabled', truthy: true }
-    },
-    { key: 'sshPassword', label: 'SSH Password', type: 'password', tab: 'ssh', storage: 'secrets', required: true, width: 'full', visibleWhen: { storage: 'profile', key: 'sshEnabled', truthy: true, and: [{ storage: 'profile', key: 'sshAuthMethod', equals: 'password' }] } },
-    {
-        key: 'sshPrivateKeyPath', label: 'SSH Private Key File', type: 'file', tab: 'ssh', storage: 'profile', width: 'full',
-        placeholder: '~/.ssh/id_rsa',
-        description: 'Path to your SSH private key file. Alternatively, paste the key contents below.',
-        picker: { mode: 'open', title: 'Select SSH Private Key', openLabel: 'Select Key', canSelectFiles: true, canSelectFolders: false },
-        visibleWhen: { storage: 'profile', key: 'sshEnabled', truthy: true, and: [{ storage: 'profile', key: 'sshAuthMethod', equals: 'privateKey' }] }
-    },
-    { key: 'sshPrivateKey', label: 'SSH Private Key (paste)', type: 'textarea', tab: 'ssh', storage: 'secrets', width: 'full', placeholder: '-----BEGIN OPENSSH PRIVATE KEY-----', description: 'Paste your private key here if not using a file path above.', visibleWhen: { storage: 'profile', key: 'sshEnabled', truthy: true, and: [{ storage: 'profile', key: 'sshAuthMethod', equals: 'privateKey' }] } },
-    { key: 'sshPrivateKeyPassphrase', label: 'SSH Key Passphrase', type: 'password', tab: 'ssh', storage: 'secrets', width: 'full', placeholder: 'Leave empty if key is not encrypted', visibleWhen: { storage: 'profile', key: 'sshEnabled', truthy: true, and: [{ storage: 'profile', key: 'sshAuthMethod', equals: 'privateKey' }] } },
-];
+import { DPProviderDescriptor } from '../core/types';
 
 export const BUILTIN_PROVIDERS: DPProviderDescriptor[] = [
     {
@@ -116,10 +91,9 @@ export const BUILTIN_PROVIDERS: DPProviderDescriptor[] = [
                 },
                 { key: 'username', label: 'Username', type: 'text', tab: 'auth', storage: 'profile', required: true, width: 'full' },
                 { key: 'password', label: 'Password', type: 'password', tab: 'auth', storage: 'secrets', required: true, width: 'full' },
-                ...SSH_TUNNEL_FIELDS
             ]
         },
-        supports: { ssl: true, oauth: false, keypair: false, introspection: true, cancellation: true, dbAdminConnectionType: true }
+        supports: { ssl: true, oauth: false, keypair: false, introspection: true, cancellation: true, dbAdminConnectionType: true, sshTunnel: true }
     },
     {
         providerId: 'mysql',
@@ -146,10 +120,9 @@ export const BUILTIN_PROVIDERS: DPProviderDescriptor[] = [
                 },
                 { key: 'username', label: 'Username', type: 'text', tab: 'auth', storage: 'profile', required: true, width: 'full' },
                 { key: 'password', label: 'Password', type: 'password', tab: 'auth', storage: 'secrets', required: true, width: 'full' },
-                ...SSH_TUNNEL_FIELDS
             ]
         },
-        supports: { ssl: true, oauth: false, keypair: false, introspection: true, cancellation: true, dbAdminConnectionType: true }
+        supports: { ssl: true, oauth: false, keypair: false, introspection: true, cancellation: true, dbAdminConnectionType: true, sshTunnel: true }
     },
     {
         providerId: 'mariadb',
@@ -176,9 +149,8 @@ export const BUILTIN_PROVIDERS: DPProviderDescriptor[] = [
                 },
                 { key: 'username', label: 'Username', type: 'text', tab: 'auth', storage: 'profile', required: true, width: 'full' },
                 { key: 'password', label: 'Password', type: 'password', tab: 'auth', storage: 'secrets', required: true, width: 'full' },
-                ...SSH_TUNNEL_FIELDS
             ]
         },
-        supports: { ssl: true, oauth: false, keypair: false, introspection: true, cancellation: true, dbAdminConnectionType: true }
+        supports: { ssl: true, oauth: false, keypair: false, introspection: true, cancellation: true, dbAdminConnectionType: true, sshTunnel: true }
     }
 ];

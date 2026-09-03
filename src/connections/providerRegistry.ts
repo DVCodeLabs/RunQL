@@ -1,7 +1,7 @@
 import { DPProviderActionHandler, DPProviderActionResult, DPProviderDescriptor } from '../core/types';
 import { BUILTIN_PROVIDERS } from './builtinProviders';
 import { secureqlActionHandler } from './secureqlActionHandler';
-import { withStandardConnectionTypeSupport } from './connectionType';
+import { withSshTunnelSupport, withStandardConnectionTypeSupport } from './connectionType';
 import * as vscode from 'vscode';
 
 export class ProviderRegistry {
@@ -34,7 +34,7 @@ export class ProviderRegistry {
     }
 
     public registerProvider(descriptor: DPProviderDescriptor): vscode.Disposable {
-        const normalizedDescriptor = withStandardConnectionTypeSupport(descriptor);
+        const normalizedDescriptor = withSshTunnelSupport(withStandardConnectionTypeSupport(descriptor));
         const previous = this.providers.get(descriptor.dialect);
         this.providers.set(descriptor.dialect, normalizedDescriptor);
         return new vscode.Disposable(() => {

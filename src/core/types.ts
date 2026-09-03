@@ -53,6 +53,11 @@ export interface DPProviderDescriptor {
          * profile.connectionType during connection setup and introspection.
          */
         dbAdminConnectionType?: boolean;
+        /**
+         * Enables the SSH tunnel tab on the connection form.  The standard
+         * SSH tunnel fields are injected automatically at registration time.
+         */
+        sshTunnel?: boolean;
     };
 }
 

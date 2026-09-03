@@ -27,7 +27,7 @@
     "erd",
     "ai"
   ],
-  "version": "1.17.8",
+  "version": "1.18.0",
   "engines": {
     "vscode": "^1.96.0"
   },

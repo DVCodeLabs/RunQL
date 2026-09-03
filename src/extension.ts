@@ -84,6 +84,7 @@ import { setSecureQLSaveProfile } from './connections/adapterFactory';
 import { DPCompletionProvider } from './completion/completionProvider';
 import { ProviderRegistry } from './connections/providerRegistry';
 import { RunQLExtensionApi } from './api';
+import { openSshTunnel } from './connections/adapters/sshTunnel';
 import { refreshAllSecureQLProfiles } from './connections/secureqlStartupRefresh';
 
 import { queryIndex } from './queryLibrary/queryIndex';
@@ -3254,6 +3255,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     getConnectionProfiles: () => loadConnectionProfiles(),
     saveConnectionProfile: (profile) => saveConnectionProfile(profile),
     getConnectionSecrets: (id) => getConnectionSecrets(id),
+    openSshTunnel: (profile, secrets) => openSshTunnel(profile, secrets),
   };
 }
 

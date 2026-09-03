@@ -361,3 +361,10 @@ Fix for visibility of pagination icons.
 ### Changes
 
 Fix for postgres failed connection timeout.
+
+## [1.18.0]
+
+### Changes
+
+Change to make SSH tunneling a shared service for all connectors that have the option set.
+Fix for opening/editing multiple connections panels at the same time.
