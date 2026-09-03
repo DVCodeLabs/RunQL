@@ -355,3 +355,9 @@ Fixed the issue where deleting a saved query did not remove the companion md fil
 ### Changes
 
 Fix for visibility of pagination icons.
+
+## [1.17.8]
+
+### Changes
+
+Fix for postgres failed connection timeout.

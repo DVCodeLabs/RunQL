@@ -365,6 +365,7 @@ export class PostgresAdapter implements DbAdapter {
         database: profile.database || "postgres",
         user: profile.username,
         password: secrets.password,
+        connectionTimeoutMillis: 15000,
         ssl: profile.ssl
           ? {
             rejectUnauthorized:
@@ -383,6 +384,7 @@ export class PostgresAdapter implements DbAdapter {
       database: profile.database || "postgres",
       user: profile.username,
       password: secrets.password,
+      connectionTimeoutMillis: 15000,
       ssl: profile.ssl
         ? {
           rejectUnauthorized:

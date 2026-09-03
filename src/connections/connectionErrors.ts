@@ -67,6 +67,9 @@ export function mapDatabaseError(error: unknown): string {
             if (e.errno === 1045) {
                 return formatMySqlAccessDenied(message);
             }
+            if (message === 'timeout expired') {
+                return 'Connection timed out. Check the host, port, and network connectivity.';
+            }
             // Return original message if available, otherwise generic
             return message || 'Connection test failed. Check your connection settings.';
     }
