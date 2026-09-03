@@ -106,9 +106,8 @@ export const BUILTIN_PROVIDERS: DPProviderDescriptor[] = [
                     type: 'select',
                     tab: 'connection',
                     storage: 'profile',
-                    defaultValue: 'disable',
+                    defaultValue: 'require',
                     options: [
-                        { value: 'disable', label: 'Disable' },
                         { value: 'require', label: 'Require' },
                         { value: 'verify-ca', label: 'Verify CA' },
                         { value: 'verify-full', label: 'Verify Full' }
@@ -137,9 +136,8 @@ export const BUILTIN_PROVIDERS: DPProviderDescriptor[] = [
                     type: 'select',
                     tab: 'connection',
                     storage: 'profile',
-                    defaultValue: 'disable',
+                    defaultValue: 'require',
                     options: [
-                        { value: 'disable', label: 'Disable' },
                         { value: 'require', label: 'Require' },
                         { value: 'verify-ca', label: 'Verify CA' },
                         { value: 'verify-full', label: 'Verify Full' }
@@ -168,9 +166,8 @@ export const BUILTIN_PROVIDERS: DPProviderDescriptor[] = [
                     type: 'select',
                     tab: 'connection',
                     storage: 'profile',
-                    defaultValue: 'disable',
+                    defaultValue: 'require',
                     options: [
-                        { value: 'disable', label: 'Disable' },
                         { value: 'require', label: 'Require' },
                         { value: 'verify-ca', label: 'Verify CA' },
                         { value: 'verify-full', label: 'Verify Full' }
