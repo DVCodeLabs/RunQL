@@ -4,16 +4,18 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 [![VS Code](https://img.shields.io/badge/vscode-%5E1.96.0-007ACC)](https://code.visualstudio.com/)
 
-SQL workflows, connections, and ERD tooling in VS Code.
+SQL workflows, saved queries, connections, and ERD tooling in VS Code.
 
 ## Project Overview
 
-RunQL keeps SQL authoring, execution, schema introspection, and ERD visualization in one workspace flow.
+RunQL keeps SQL authoring, execution, saved-query documentation, schema introspection, and ERD visualization in one workspace flow.
 
-- Run SQL with a dedicated results panel
-- Manage and introspect connections (PostgreSQL, MySQL, SecureQL, and registered connector extensions)
+- Run SQL with a dedicated results panel, guarded result editing, and query history
+- Manage and introspect connections (PostgreSQL, MySQL, MariaDB, SecureQL, and registered connector extensions)
+- Save SQL query bundles with companion Markdown metadata
 - Export query/table results as CSV
-- Generate schema and ERD bundle artifacts as JSON you can commit
+- Generate multi-schema and ERD bundle artifacts as JSON you can commit
+- Store your files in the workspace, user home, or a custom folder
 - Optionally generate docs/comments with AI providers you control
 
 RunQL is offline-first by default. External DB connections and hosted AI providers require network access when used.
@@ -22,21 +24,34 @@ RunQL is offline-first by default. External DB connections and hosted AI provide
 
 ### SQL Execution + Results UI
 - Run active SQL with a keybinding (`Shift+Cmd+R` on macOS in SQL editors)
+- Run the current statement with `Shift+Cmd+Enter` on macOS
+- Run queries with or without the configured row limit
 - View tabular results in the `RunQL: Results` panel
-- Export CSV and trigger chart generation hooks
+- Export CSV, build charts, and edit supported result sets inline
 
 ### Connections + Introspection
 - Add/test/select connections and introspect schemas
-- Persist schema bundles as JSON under `RunQL/schemas/<connection>/`
-- Use introspection for autocomplete and ERD generation
+- Reuse connection details, tag environments, and choose Data Access or DB Admin mode
+- Persist schema bundles as JSON under `RunQL/schemas/<connection>/<schema>/`
+- Use introspection for autocomplete, table actions, and ERD generation
+
+### Saved Queries + Markdown
+- Save SQL files into organized connection-scoped folders automatically
+- Search saved queries by SQL, metadata, tags, and companion docs
+- View and edit companion Markdown docs in the `RunQL: Markdown` panel
+
+### Explorer Table Actions
+- Preview top rows, create/edit tables, and show table DDL
+- Generate SELECT, INSERT, UPDATE, and DELETE templates
+- Dump structure, generate mock data, copy, drop, or truncate tables
 
 ### ERD
 - Generate ERDs for active connections or specific schemas
 - Save ERD artifacts in each schema bundle as `erd.json` and `erd.layout.json`
 
 ### Optional AI Integration
-- Generate companion Markdown docs and inline SQL comments
-- Use VS Code LM API, OpenAI, Anthropic, Azure OpenAI, Ollama, or OpenAI-compatible endpoints
+- Generate companion Markdown docs, inline SQL comments, and schema descriptions
+- Use GitHub Copilot / VS Code AI, Claude Code, Codex, OpenAI, Anthropic, Azure OpenAI, Ollama, or OpenAI-compatible endpoints
 - Keep AI optional; extension works without it
 
 ## Installation
@@ -60,7 +75,9 @@ code --install-extension runql-*.vsix
 ## Quick Start
 
 ### 1. Open a workspace folder
-RunQL initializes a `RunQL/` structure for queries, per-connection schema bundles, and generated system artifacts.
+RunQL can store its files in the project workspace, your user-level RunQL folder, or a custom path.
+
+The default project layout includes queries, per-connection/per-schema bundles, and generated system artifacts.
 
 ### 2. Run your first SQL query
 - Create/open a `.sql` file
@@ -72,7 +89,12 @@ RunQL initializes a `RunQL/` structure for queries, per-connection schema bundle
 ### 3. Introspect and explore schema
 - Run `RunQL: Refresh All Schemas`
 - Expand the Explorer tree
-- Use `RunQL: View ERD (Selected Schema)` when needed
+- Preview tables, generate SQL templates, or use `RunQL: View ERD (Selected Schema)` when needed
+
+### 4. Save reusable queries
+- Use `RunQL: Save Query` or `Shift+Cmd+S` on macOS in a SQL editor
+- Review saved queries in the Saved Queries and Query Search views
+- Add notes to the companion Markdown doc when useful
 
 ## Configuration Guide
 
@@ -87,6 +109,8 @@ Common settings (VS Code settings key prefix: `runql.`):
 - `runql.ai.sendSchemaContext`: include schema context in AI prompts
 - `runql.format.enabled`: enable SQL formatting
 - `runql.ui.showRoutines`: show procedures/functions in the Explorer
+- `runql.sqlCodelens.enabled`: show RunQL actions at the top of SQL files
+- `runql.storage.location`: choose `workspace`, `user`, or `custom` storage
 
 Full reference: [`docs/configuration.md`](docs/configuration.md)
 

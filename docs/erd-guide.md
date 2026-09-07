@@ -1,6 +1,6 @@
 # ERD Guide
 
-RunQL can generate ERDs from introspected schemas and save artifacts in your workspace.
+RunQL can generate ERDs from introspected schemas and save artifacts in the active RunQL storage root.
 
 ## Commands
 
@@ -17,14 +17,18 @@ RunQL can generate ERDs from introspected schemas and save artifacts in your wor
 
 ERD files are persisted in:
 
-- `RunQL/schemas/<connection>/erd.json`
-- `RunQL/schemas/<connection>/erd.layout.json`
+- `RunQL/schemas/<connection>/<schema>/erd.json`
+- `RunQL/schemas/<connection>/<schema>/erd.layout.json`
 
 The same bundle also contains schema-sidecar files such as:
 
-- `RunQL/schemas/<connection>/schema.json`
-- `RunQL/schemas/<connection>/description.json`
-- `RunQL/schemas/<connection>/custom.relationships.json`
+- `RunQL/schemas/<connection>/<schema>/schema.json`
+- `RunQL/schemas/<connection>/<schema>/description.json`
+- `RunQL/schemas/<connection>/<schema>/custom.relationships.json`
+
+The connection folder also contains:
+
+- `RunQL/schemas/<connection>/manifest.json`
 
 These files are useful for:
 
@@ -37,4 +41,4 @@ These files are useful for:
 - Empty ERD: refresh introspection first
 - Missing tables: check schema filters/system-schema visibility
 - Stale graph: rerun introspection and regenerate ERD
-- Missing legacy ERD file: check the matching schema bundle; old `RunQL/system/erd/` files are migrated into bundles and backed up under `RunQL/system/migration_backup/`
+- Missing legacy ERD file: check the matching schema-level bundle; old `RunQL/system/erd/` files are migrated into bundles and backed up under `RunQL/system/migration_backup/`

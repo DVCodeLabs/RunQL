@@ -1,6 +1,6 @@
 # RunQL Documentation
 
-RunQL is a VS Code extension for SQL workflows, connection management, and ERD generation.
+RunQL is a VS Code extension for SQL workflows, saved queries, connection management, schema introspection, and ERD generation.
 
 ## Start Here
 
@@ -12,10 +12,10 @@ RunQL is a VS Code extension for SQL workflows, connection management, and ERD g
 
 - [Feature Highlights](./features.md)
 - [ERD Guide](./erd-guide.md)
+- [Database Adapters](./database-adapters.md)
 
 ## Integrations
 
-- [Database Adapters](./database-adapters.md)
 - [AI Provider Setup](./ai-providers.md)
 
 ## Security

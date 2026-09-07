@@ -14,6 +14,34 @@ RunQL settings use the `runql.` prefix in VS Code.
 - Default: `true`
 - Description: enable inline editing and save-back in result sets when the active connection and result safety checks allow it.
 
+## Storage
+
+### `runql.storage.location`
+- Type: string enum
+- Values: `workspace`, `user`, `custom`
+- Default: `workspace`
+- Description: choose where RunQL stores queries, schema snapshots, connection profiles, and local system files.
+
+### `runql.storage.userPath`
+- Type: string
+- Default: `~/.runql`
+- Description: user-level storage path outside GitHub Codespaces. `~` expands to the current OS user's home directory.
+
+### `runql.storage.codespacesPath`
+- Type: string
+- Default: `/workspaces/.runql`
+- Description: user-level storage path when running inside GitHub Codespaces.
+
+### `runql.storage.customPath`
+- Type: string
+- Default: empty
+- Description: custom storage path used when `runql.storage.location = custom`.
+
+### `runql.storage.workspaceFolder`
+- Type: string
+- Default: empty
+- Description: workspace folder URI that owns the workspace-local RunQL directory in multi-root workspace mode.
+
 ## AI
 
 ### `runql.ai.source`
@@ -26,7 +54,7 @@ RunQL settings use the `runql.` prefix in VS Code.
 - Type: string enum
 - Values: empty, `claudeExtension`, `codexExtension`
 - Default: empty
-- Description: preferred installed extension when `runql.ai.source` is `aiExtension`.
+- Description: preferred installed extension when `runql.ai.source` is `aiExtension`. RunQL can hand supported prompts to Claude Code or Codex when available.
 
 ### `runql.ai.apiProvider`
 - Type: string enum

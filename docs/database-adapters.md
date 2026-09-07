@@ -6,9 +6,10 @@ RunQL supports multiple database dialects through built-in adapters and provider
 
 | Adapter | Status | Notes |
 | --- | --- | --- |
-| PostgreSQL | Built in | Connection, query, introspection, CSV export, schema backup, SSL, and SSH tunnel flow |
-| MySQL | Built in | Connection, query, introspection, CSV export, schema backup, SSL, and SSH tunnel flow |
-| SecureQL | Built in | SecureQL API-backed connection, query, introspection, permissions, and effective SQL dialect detection |
+| PostgreSQL | Built in | Connection, query, introspection, CSV export, schema backup, SSL, DB Admin mode, and SSH tunnel flow |
+| MySQL | Built in | Connection, query, introspection, CSV export, schema backup, SSL, DB Admin mode, and SSH tunnel flow |
+| MariaDB | Built in | Connection, query, introspection, CSV export, schema backup, SSL, DB Admin mode, and SSH tunnel flow |
+| SecureQL | Built in | SecureQL API-backed connection, query, introspection, permissions, query approvals, and effective SQL dialect detection |
 | DuckDB | External/legacy | Not registered as a built-in adapter in the current core client |
 | Snowflake | External | Supported by connector extensions that register a provider and adapter |
 | MS SQL Server | External | Supported by connector extensions that register a provider and adapter |
@@ -17,11 +18,13 @@ RunQL supports multiple database dialects through built-in adapters and provider
 
 - Supports host, port, database, username/password, SSL, and optional SSH tunnel settings.
 - Supports test connection, query execution, schema introspection, table preview, CSV export, schema backup, and ERD flows.
+- Supports Data Access and DB Admin connection types.
 
-## MySQL
+## MySQL and MariaDB
 
-- Supports host, port, database, username/password, SSL, and optional SSH tunnel settings.
+- Supports host, port, username/password, SSL, and optional SSH tunnel settings.
 - Supports the same core workflow as PostgreSQL: test connection, query execution, schema introspection, table preview, CSV export, schema backup, and ERD flows.
+- Supports Data Access and DB Admin connection types.
 
 ## SecureQL
 
@@ -29,6 +32,8 @@ RunQL supports multiple database dialects through built-in adapters and provider
 - Validates the API key and can auto-detect server-controlled connection metadata.
 - Uses the target database's effective SQL dialect for formatting, generated metadata, and AI prompt context.
 - Enforces SecureQL-provided permissions such as CSV export and data editing controls.
+- Supports SecureQL query approval flows for protected queries.
+- Refreshes SecureQL connection IDs and metadata when API keys change.
 
 ## External Connectors
 
@@ -52,22 +57,39 @@ Adapters remain responsible for DB-specific behavior. For example, an MS SQL Ser
 
 Existing provider extensions that do not set `supports.dbAdminConnectionType` continue to behave as data-access-only connectors. The current Snowflake and DuckDB connector extensions do not opt in to DB Admin mode. Snowflake should only enable it after the adapter defines admin-mode connection defaults and introspection surfaces, such as account, role, database, schema, and usage metadata that the active Snowflake role can read. DuckDB generally does not need a separate DB Admin mode unless the connector adds a distinct system-catalog or maintenance workflow.
 
+### SSH Tunnel Support
+
+Provider extensions can opt into the standard SSH tunnel tab:
+
+```ts
+supports: {
+  sshTunnel: true
+}
+```
+
+RunQL injects the common SSH fields and uses shared tunnel handling for connectors that opt in. Adapters should keep their normal connection logic focused on the database endpoint RunQL provides.
+
 ## Schema Bundles
 
-Introspection writes per-connection schema bundles under:
+Introspection writes per-connection, per-schema bundles under:
 
-- `RunQL/schemas/<connection>/schema.json`
-- `RunQL/schemas/<connection>/description.json`
-- `RunQL/schemas/<connection>/custom.relationships.json`
-- `RunQL/schemas/<connection>/erd.json`
-- `RunQL/schemas/<connection>/erd.layout.json`
+- `RunQL/schemas/<connection>/manifest.json`
+- `RunQL/schemas/<connection>/<schema>/schema.json`
+- `RunQL/schemas/<connection>/<schema>/description.json`
+- `RunQL/schemas/<connection>/<schema>/custom.relationships.json`
+- `RunQL/schemas/<connection>/<schema>/erd.json`
+- `RunQL/schemas/<connection>/<schema>/erd.layout.json`
 
-Legacy flat schema files and legacy `RunQL/system/erd/` files are migrated into bundle folders and backed up under `RunQL/system/migration_backup/`.
+Legacy flat schema files, legacy per-connection bundles, and legacy `RunQL/system/erd/` files are migrated into schema-level bundle folders and backed up under `RunQL/system/migration_backup/`.
+
+Deleted schemas from a successful refreshes are archived under `RunQL/schemas/deleted/`. Query and schema folders are also archived or renamed when connections are deleted or renamed.
 
 ## Typical Workflow
 
 1. Add DB connection
 2. Test connection
 3. Introspect schema
-4. Run SQL and inspect results
-5. Export needed data as CSV
+4. Explore tables, views, routines, keys, and indexes
+5. Run SQL and inspect results
+6. Save reusable queries with companion Markdown docs
+7. Export needed data as CSV

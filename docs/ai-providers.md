@@ -90,6 +90,8 @@ Set:
 
 This path is best for supported edit and generation tasks that RunQL can hand off directly to another extension.
 
+RunQL can auto-detect supported Claude Code or Codex extensions and offer one-click setup when available.
+
 ### Use OpenAI, Anthropic, or Azure directly
 
 Set:
@@ -126,6 +128,9 @@ Set:
 
 - Query Markdown documentation generation
 - Inline SQL comments generation
+- Schema description generation
+- Schema description response import
+- Schema-aware query prompts
 - Optional chart mapping suggestions
 
 ## Prompt Templates
