@@ -121,3 +121,20 @@ RunQL settings use the `runql.` prefix in VS Code.
 - Type: boolean
 - Default: `true`
 - Description: display RunQL actions and connection selector in SQL files.
+
+## Welcome Page
+
+### `runql.welcome.sendUsSomeLove`
+- Type: boolean
+- Default: `true`
+- Description: show the optional "Using RunQL Today?" button on the Welcome and What's New pages.
+
+### `runql.welcome.sendUsSomeLoveUrl`
+- Type: string
+- Default: `https://runql.com/api/send-us-some-love`
+- Description: URL used by the optional "Using RunQL Today?" button. RunQL sends an empty `POST` request only when the user clicks the button. Leave empty to hide the button.
+
+### `runql.welcome.sendUsSomeLoveToast`
+- Type: boolean
+- Default: `true`
+- Description: show the optional "Using RunQL Today?" toast once per day after a query runs. The toast can be turned off from the toast action.

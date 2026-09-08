@@ -94,6 +94,7 @@ import { MarkdownViewProvider } from './markdown/markdownView';
 import { ERDViewProvider } from './erd/erdViewProvider';
 import { updateProjectInitializedContext, isProjectInitialized } from './core/isProjectInitialized';
 import { WelcomeView } from './ui/welcomeView';
+import { isSendUsSomeLoveEnabled, sendUsSomeLove } from './ui/sendUsSomeLove';
 import { CreateTableView, CreateTablePanelContext, CreateTableResultPayload } from './ui/createTableView';
 import { buildCreateTableSql, buildAlterTableSql, buildDropTableSql, CreateTableDraft } from './core/createTableSql';
 import { registerTableContextCommands } from './commands/tableContextCommands';
@@ -143,6 +144,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
   let projectInitializedAtStartup = false;
   let autoWelcomeShownThisSession = false;
   let autoWhatsNewShownThisSession = false;
+  let sendUsSomeLoveToastInFlight = false;
   const tablePreviewContextByDocUri = new Map<string, {
     sql: string;
     source: QueryResultSource;
@@ -154,6 +156,49 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
     refreshSql: string;
     userSql: string;
   }>();
+
+  const localDateKey = (date = new Date()): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const maybeShowSendUsSomeLoveToast = async () => {
+    if (sendUsSomeLoveToastInFlight) return;
+
+    const cfg = vscode.workspace.getConfiguration('runql.welcome');
+    if (!cfg.get<boolean>('sendUsSomeLoveToast', true)) return;
+    if (!isSendUsSomeLoveEnabled()) return;
+
+    const today = localDateKey();
+    const lastShown = context.globalState.get<string>('runql.welcome.sendUsSomeLoveToastLastShownDate');
+    if (lastShown === today) return;
+
+    sendUsSomeLoveToastInFlight = true;
+    await context.globalState.update('runql.welcome.sendUsSomeLoveToastLastShownDate', today);
+    try {
+      const sendAction = '👍 I’m using RunQL today!';
+      const disableAction = "Don't show again";
+      const choice = await vscode.window.showInformationMessage(
+        'Using RunQL Today? Let us know by sending an anonymous signal.',
+        sendAction,
+        disableAction
+      );
+
+      if (choice === sendAction) {
+        await sendUsSomeLove();
+        vscode.window.showInformationMessage('🙏 Thanks!');
+      } else if (choice === disableAction) {
+        await cfg.update('sendUsSomeLoveToast', false, vscode.ConfigurationTarget.Global);
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Could not send.';
+      vscode.window.showWarningMessage(`RunQL could not send that signal: ${message}`);
+    } finally {
+      sendUsSomeLoveToastInFlight = false;
+    }
+  };
 
   // 1. Register Panel View Providers IMMEDIATELY
   const resultsViewProvider = new ResultsViewProvider(context);
@@ -1041,6 +1086,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
         resultsViewProvider.postMessage(poller.docUri, 'updateResults', results);
         await queryIndex.updateLastRun(poller.docUri);
         addQueryHistoryEntry(poller.profile, sql, 'success', results.rows?.length, results.elapsedMs);
+        void maybeShowSendUsSomeLoveToast();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         postApprovalState(docUri, {
@@ -2335,6 +2381,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
             scriptResult.lastTabularResult?.rows?.length,
             scriptResult.statements.reduce((sum, s) => sum + (s.elapsedMs || 0), 0),
           );
+          if (!scriptResult.failedAtIndex) {
+            void maybeShowSendUsSomeLoveToast();
+          }
 
           // DDL Auto-Refresh — check all executed statements
           const anyDDL = scriptResult.statements.some(
@@ -2376,6 +2425,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<RunQLE
 
           // MEMORY RECALL: Save to history
           addQueryHistoryEntry(profile, text, 'success', results.rows?.length, results.elapsedMs);
+          void maybeShowSendUsSomeLoveToast();
 
           // DDL Auto-Refresh
           if (checkForDDL(text)) {

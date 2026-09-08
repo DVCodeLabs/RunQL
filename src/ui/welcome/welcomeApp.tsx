@@ -679,6 +679,12 @@ type StorageStatus = {
     workspaceFolderCount: number;
 };
 
+type SendUsSomeLoveStatus = {
+    enabled: boolean;
+};
+
+type SendUsSomeLoveState = 'idle' | 'sending' | 'sent' | 'failed';
+
 function App() {
     const [initialized, setInitialized] = useState<boolean | null>(null);
     const [hasWorkspace, setHasWorkspace] = useState<boolean | null>(null);
@@ -686,6 +692,9 @@ function App() {
     const [version, setVersion] = useState<string>('');
     const [whatsNewEntry, setWhatsNewEntry] = useState<ChangelogEntry | null>(null);
     const [storage, setStorage] = useState<StorageStatus | null>(null);
+    const [sendUsSomeLove, setSendUsSomeLove] = useState<SendUsSomeLoveStatus>({ enabled: false });
+    const [sendUsSomeLoveState, setSendUsSomeLoveState] = useState<SendUsSomeLoveState>('idle');
+    const [sendUsSomeLoveError, setSendUsSomeLoveError] = useState<string>('');
     const [customPathDraft, setCustomPathDraft] = useState<string>('');
     // Local "pending" selection that overrides the server-side
     // storage.location visually while a migration prompt is in flight
@@ -706,6 +715,7 @@ function App() {
                 setMode((message.mode as WelcomeMode) || 'welcome');
                 setVersion((message.version as string) || '');
                 setWhatsNewEntry((message.whatsNewEntry as ChangelogEntry | undefined) || null);
+                setSendUsSomeLove((message.sendUsSomeLove as SendUsSomeLoveStatus | undefined) ?? { enabled: false });
                 const incoming = (message.storage as StorageStatus | undefined) ?? null;
                 setStorage((prevStorage) => {
                     // Clear pending only when the server-side location
@@ -733,6 +743,14 @@ function App() {
             } else if (message.command === 'customPathPicked') {
                 const fsPath = typeof message.fsPath === 'string' ? message.fsPath : '';
                 if (fsPath) setCustomPathDraft(fsPath);
+            } else if (message.command === 'sendUsSomeLoveResult') {
+                if (message.ok === true) {
+                    setSendUsSomeLoveState('sent');
+                    setSendUsSomeLoveError('');
+                } else {
+                    setSendUsSomeLoveState('failed');
+                    setSendUsSomeLoveError(typeof message.message === 'string' ? message.message : 'Could not send.');
+                }
             }
         };
         window.addEventListener('message', handler);
@@ -817,6 +835,13 @@ function App() {
 
     const handleOpenCodeLensFontSetting = () => {
         vscode.postMessage({ command: 'openCodeLensFontSetting' });
+    };
+
+    const handleSendUsSomeLove = () => {
+        if (sendUsSomeLoveState === 'sending' || sendUsSomeLoveState === 'sent') return;
+        setSendUsSomeLoveState('sending');
+        setSendUsSomeLoveError('');
+        vscode.postMessage({ command: 'sendUsSomeLove' });
     };
 
     const workspaceRequired = storage?.location !== 'user' && storage?.location !== 'custom';
@@ -1255,6 +1280,43 @@ function App() {
                     ))}
                 </div>
             </CollapsibleSection>
+
+            {sendUsSomeLove.enabled && (
+                <div style={styles.card}>
+                    <h2 style={styles.cardTitle}>Using RunQL Today?</h2>
+                    <p style={{ ...styles.statusNote, marginBottom: '10px' }}>
+                        Let us know by sending an anonymous signal:
+                    </p>
+                    {sendUsSomeLoveState === 'sent' ? (
+                        <div style={{ fontSize: '14px', fontWeight: 600 }}>
+                            🙏 Thanks!
+                        </div>
+                    ) : (
+                        <>
+                            <button
+                                type="button"
+                                style={{
+                                    ...styles.button,
+                                    ...styles.primaryButton,
+                                    ...(sendUsSomeLoveState === 'sending' ? styles.disabledButton : {}),
+                                }}
+                                onClick={handleSendUsSomeLove}
+                                disabled={sendUsSomeLoveState === 'sending'}
+                                title="Send an empty anonymous POST request without leaving your editor"
+                            >
+                                {sendUsSomeLoveState === 'sending'
+                                    ? 'Sending...'
+                                    : '👍 I’m using RunQL today!'}
+                            </button>
+                            {sendUsSomeLoveState === 'failed' && (
+                                <p style={{ ...styles.statusNote, marginBottom: 0, color: 'var(--vscode-errorForeground)' }}>
+                                    {sendUsSomeLoveError}
+                                </p>
+                            )}
+                        </>
+                    )}
+                </div>
+            )}
 
             {/* Documentation */}
             <div style={styles.card}>

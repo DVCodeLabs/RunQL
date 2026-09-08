@@ -27,7 +27,7 @@
     "erd",
     "ai"
   ],
-  "version": "1.18.0",
+  "version": "1.18.1",
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -624,6 +624,21 @@
           "type": "boolean",
           "default": true,
           "description": "RunQL: Show RunQL actions and connection selector at the top of SQL files."
+        },
+        "runql.welcome.sendUsSomeLove": {
+          "type": "boolean",
+          "default": true,
+          "description": "RunQL: Show the optional 'Using RunQL Today?' button on the Welcome and What's New pages."
+        },
+        "runql.welcome.sendUsSomeLoveUrl": {
+          "type": "string",
+          "default": "https://runql.com/api/send-us-some-love",
+          "markdownDescription": "RunQL: URL used by the optional 'Using RunQL Today?' button. RunQL sends an empty `POST` request only when the user clicks the button. Leave empty to hide the button."
+        },
+        "runql.welcome.sendUsSomeLoveToast": {
+          "type": "boolean",
+          "default": true,
+          "description": "RunQL: Show the optional 'Using RunQL Today?' toast once per day after a query runs."
         },
         "runql.format.enabled": {
           "type": "boolean",

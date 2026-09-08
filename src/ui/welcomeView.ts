@@ -18,6 +18,7 @@ import {
     suppressAutoMigration,
     markProgrammaticStorageChange,
 } from '../core/storageMigration';
+import { isSendUsSomeLoveEnabled, sendUsSomeLove } from './sendUsSomeLove';
 
 type WelcomeMode = 'welcome' | 'whatsNew';
 
@@ -106,6 +107,9 @@ export class WelcomeView {
                 codespaces: isCodespaces(),
                 workspaceFolderCount: vscode.workspace.workspaceFolders?.length ?? 0,
             },
+            sendUsSomeLove: {
+                enabled: isSendUsSomeLoveEnabled(),
+            },
         });
     }
 
@@ -131,6 +135,19 @@ export class WelcomeView {
         while (this._disposables.length) {
             const x = this._disposables.pop();
             if (x) x.dispose();
+        }
+    }
+
+    private async _sendUsSomeLove(webview: vscode.Webview): Promise<void> {
+        try {
+            await sendUsSomeLove();
+            webview.postMessage({ command: 'sendUsSomeLoveResult', ok: true });
+        } catch (e: unknown) {
+            webview.postMessage({
+                command: 'sendUsSomeLoveResult',
+                ok: false,
+                message: e instanceof Error ? e.message : 'Could not send.',
+            });
         }
     }
 
@@ -319,6 +336,10 @@ export class WelcomeView {
 
                     case 'openStorageFolder':
                         await vscode.commands.executeCommand('runql.storage.openFolder');
+                        break;
+
+                    case 'sendUsSomeLove':
+                        await this._sendUsSomeLove(webview);
                         break;
 
                     case 'showWarning': {

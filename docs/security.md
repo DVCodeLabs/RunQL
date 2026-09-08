@@ -45,6 +45,16 @@ These files are intended to be reviewable artifacts, but should still be checked
 - RunQL respects SecureQL-provided CSV export and data editing permissions.
 - Protected queries can require SecureQL approval before execution.
 
+## Optional Welcome Signal
+
+- The Welcome and What's New pages can show an optional "Using RunQL Today?" button.
+- After a successful query run, RunQL can show the same optional prompt once per day as a toast.
+- Clicking the button or toast action sends an empty `POST` request to the configured `runql.welcome.sendUsSomeLoveUrl`.
+- Official builds default to `https://runql.com/api/send-us-some-love`.
+- No RunQL workspace, query, schema, connection, or version data is sent.
+- Set `runql.welcome.sendUsSomeLove = false` or clear `runql.welcome.sendUsSomeLoveUrl` to hide the button and skip the toast.
+- Set `runql.welcome.sendUsSomeLoveToast = false` to keep the Welcome button but turn off the daily toast.
+
 ## Vulnerability Reporting
 
 For security issues, follow private disclosure in [`../SECURITY.md`](../SECURITY.md).

@@ -368,3 +368,9 @@ Fix for postgres failed connection timeout.
 
 Change to make SSH tunneling a shared service for all connectors that have the option set.
 Fix for opening/editing multiple connections panels at the same time.
+
+## [1.18.1]
+
+### Changes
+
+Added a Send Us Some Love button that lets you anonymously tell us you’re using RunQL today. It was built with privacy in mind: it can be turned off, and when clicked it sends an empty POST to our endpoint with no information at all.
