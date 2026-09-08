@@ -374,3 +374,10 @@ Fix for opening/editing multiple connections panels at the same time.
 ### Changes
 
 Added a Send Us Some Love button that lets you anonymously tell us you’re using RunQL today. It was built with privacy in mind: it can be turned off, and when clicked it sends an empty POST to our endpoint with no information at all.
+
+## [1.18.2]
+
+### Changes
+
+Added a Send Us Some Love button that lets you anonymously tell us you’re using RunQL today. It was built with privacy in mind: it can be turned off, and when clicked it sends an empty POST to our endpoint with no information at all.
+Minor tweak to the VSCode Marketplace publish process.

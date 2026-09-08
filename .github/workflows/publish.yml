@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   package:
@@ -68,20 +69,69 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'release'
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+      - run: npm ci
+        env:
+          npm_config_fetch_timeout: 600000
       - uses: actions/download-artifact@v4
         with:
           pattern: vsix-*
           merge-multiple: true
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20.x'
-      - run: npx @vscode/vsce publish --packagePath *.vsix
+      - name: Publish to Visual Studio Marketplace
+        run: |
+          set -euo pipefail
+
+          for vsix in *.vsix; do
+            published=0
+
+            for attempt in 1 2 3; do
+              echo "Publishing $vsix to Visual Studio Marketplace (attempt $attempt)..."
+
+              if npx vsce publish --packagePath "$vsix" --skip-duplicate; then
+                published=1
+                break
+              fi
+
+              if [ "$attempt" -lt 3 ]; then
+                sleep $((attempt * 30))
+              fi
+            done
+
+            if [ "$published" -ne 1 ]; then
+              echo "Failed to publish $vsix to Visual Studio Marketplace."
+              exit 1
+            fi
+          done
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
       - name: Publish to Open VSX
         run: |
+          set -euo pipefail
+
           for vsix in *.vsix; do
-            npx ovsx publish "$vsix" -p "$OVSX_PAT" --skip-duplicate
+            published=0
+
+            for attempt in 1 2 3; do
+              echo "Publishing $vsix to Open VSX (attempt $attempt)..."
+
+              if npx ovsx publish "$vsix" -p "$OVSX_PAT" --skip-duplicate; then
+                published=1
+                break
+              fi
+
+              if [ "$attempt" -lt 3 ]; then
+                sleep $((attempt * 30))
+              fi
+            done
+
+            if [ "$published" -ne 1 ]; then
+              echo "Failed to publish $vsix to Open VSX."
+              exit 1
+            fi
           done
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
